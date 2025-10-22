@@ -3,12 +3,12 @@ import pandas as pd
 import requests
 import time
 from datetime import datetime
-import os # Pastikan os diimpor jika belum
+import os 
 
 # ----------------- KONFIGURASI HALAMAN -----------------
 st.set_page_config(
     page_title="Dasbor Monitoring Cuaca",
-    page_icon="☁️",
+    page_icon="🌦️", # Ganti ikon
     layout="wide",
 )
 
@@ -17,12 +17,11 @@ API_URL = "http://syakhish.pythonanywhere.com/get_data"
 # ------------------------------------
 
 # ----------------- JUDUL APLIKASI -----------------
-st.title("☁️ Dasbor Monitoring Cuaca Real-Time")
+st.title("🌦️ Dasbor Monitoring Cuaca Real-Time") # Ganti ikon judul
 st.markdown("---")
 
 # ----------------- FUNGSI BACA DATA DARI API -----------------
-# Cache data selama 15 detik untuk mengurangi beban API
-@st.cache_data(ttl=15)
+@st.cache_data(ttl=15) # Cache data selama 15 detik
 def baca_data_dari_api():
     try:
         response = requests.get(API_URL, timeout=10)
@@ -30,12 +29,10 @@ def baca_data_dari_api():
         data = response.json()
         
         if not data:
-            st.warning("Menunggu data masuk dari sensor...")
+            # st.warning("Menunggu data masuk dari sensor...") # Komentari agar tidak terlalu ramai
             return None
         
         df = pd.DataFrame(data)
-        
-        # Konversi UNIX timestamp ke Datetime WIB (UTC+7)
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='s') + pd.Timedelta(hours=7)
         return df
         
@@ -46,40 +43,38 @@ def baca_data_dari_api():
         st.error(f"Terjadi error saat memproses data dari API: {e}")
         return None
 
-# ----------------- FUNGSI PENENTU STATUS CUACA -----------------
+# ----------------- FUNGSI PENENTU STATUS CUACA & EMOJI -----------------
 def tentukan_status_cuaca(data):
-    """ Menganalisis data sensor terkini dan memberikan kesimpulan status cuaca. """
-    imcs = data.get('imcs', 0) # Gunakan .get() untuk keamanan jika kunci tidak ada
-    cahaya = data.get('cahaya', 4095) # Nilai analog TEMT6000 (0-4095), default gelap
+    imcs = data.get('imcs', 0) 
+    cahaya = data.get('cahaya', 4095) 
     kelembapan = data.get('kelembapan', 0)
     
-    # PERHATIAN: Nilai ambang batas cahaya ini HANYA PERKIRAAN. Sesuaikan!
-    # Ingat: Semakin KECIL nilai analog TEMT6000, semakin TERANG.
+    # PERKIRAAN AMBANG BATAS (Sesuaikan!)
     AMBANG_CERAH = 800
     AMBANG_BERAWAN = 2000
     AMBANG_MENDUNG = 3000
-    AMBANG_MALAM = 3800 # Di atas ini diasumsikan malam
+    AMBANG_MALAM = 3800 
     
     if cahaya > AMBANG_MALAM:
-        return "🌃 Malam Hari"
+        return "🌃 Malam Hari", "🌃"
     elif imcs > 1.05 and cahaya > AMBANG_MENDUNG:
         if kelembapan > 90:
-             return "🌧️ Hujan Deras"
+             return "Hujan Deras", "🌧️"
         else:
-             return "🌦️ Hujan Ringan"
+             return "Hujan Ringan", "🌦️"
     elif imcs > 0.95 and cahaya > AMBANG_BERAWAN:
-        return "☁️ Mendung (Potensi Hujan)"
+        return "Mendung (Potensi Hujan)", "☁️"
     elif cahaya < AMBANG_CERAH:
         if kelembapan < 70:
-            return "☀️ Cerah"
+            return "Cerah", "☀️"
         else:
-            return "🌤️ Cerah Berawan (Lembab)"
+            return "Cerah Berawan (Lembab)", "🌤️"
     elif cahaya < AMBANG_BERAWAN:
-        return "🌥️ Cerah Berawan"
+        return "Cerah Berawan", "🌥️"
     elif cahaya < AMBANG_MENDUNG:
-        return "☁️ Berawan"
-    else: # Kondisi cahaya di atas AMBANG_MENDUNG tapi imcs tidak tinggi
-         return "🌫️ Sangat Mendung / Berkabut"
+        return "Berawan", "☁️"
+    else: 
+         return "Sangat Mendung / Berkabut", "🌫️"
 
 # ----------------- LAYOUT UTAMA APLIKASI -----------------
 placeholder = st.empty()
@@ -92,25 +87,29 @@ while True:
         with placeholder.container():
             # --- DATA TERKINI & KESIMPULAN ---
             data_terkini = df.iloc[-1]
-            status_cuaca = tentukan_status_cuaca(data_terkini)
+            status_text, status_emoji = tentukan_status_cuaca(data_terkini) # Ambil teks dan emoji
             
             waktu_update = data_terkini['timestamp'].strftime('%d %b %Y, %H:%M:%S')
             
             # Kolom untuk waktu update dan kesimpulan
-            col1, col2 = st.columns([3, 2]) # Buat 2 kolom
+            col1, col2 = st.columns([3, 2]) 
             with col1:
                 st.subheader(f"📍 Data Sensor Terkini")
                 st.caption(f"(Diperbarui pada: {waktu_update} WIB)")
             with col2:
                  st.subheader(f"Kesimpulan Cuaca:")
-                 st.header(status_cuaca) # Tampilkan kesimpulan dengan font lebih besar
+                 st.header(f"{status_emoji} {status_text}") # Tampilkan emoji + teks
 
-            st.markdown("---") # Garis pemisah
+            st.markdown("---") 
 
             # --- METRIK DETAIL ---
             k1, k2, k3, k4, k5 = st.columns(5)
-            k1.metric(label="🌡️ Suhu (°C)", value=f"{data_terkini.get('suhu', 'N/A'):.1f}")
-            k2.metric(label="💧 Kelembapan (%)", value=f"{data_terkini.get('kelembapan', 'N/A'):.1f}")
+            # Menambahkan delta (perubahan dari data sebelumnya) jika ada lebih dari 1 data
+            delta_suhu = df['suhu'].iloc[-1] - df['suhu'].iloc[-2] if len(df) > 1 else 0
+            delta_kelembapan = df['kelembapan'].iloc[-1] - df['kelembapan'].iloc[-2] if len(df) > 1 else 0
+            
+            k1.metric(label="🌡️ Suhu (°C)", value=f"{data_terkini.get('suhu', 'N/A'):.1f}", delta=f"{delta_suhu:.1f}")
+            k2.metric(label="💧 Kelembapan (%)", value=f"{data_terkini.get('kelembapan', 'N/A'):.1f}", delta=f"{delta_kelembapan:.1f}")
             k3.metric(label="🌀 Tekanan (hPa)", value=f"{data_terkini.get('tekanan', 'N/A'):.1f}")
             k4.metric(label="☀️ Cahaya (Analog)", value=f"{data_terkini.get('cahaya', 'N/A'):.0f}", help="Nilai 0-4095. Semakin kecil = semakin terang")
             k5.metric(label="☔️ IMCS", value=f"{data_terkini.get('imcs', 'N/A'):.2f}",
@@ -118,28 +117,27 @@ while True:
 
             st.markdown("---")
 
-            # --- GRAFIK HISTORIS ---
+            # --- GRAFIK HISTORIS (MENGGUNAKAN AREA CHART) ---
             st.subheader("📈 Grafik Historis Data Sensor")
-            # Pastikan kolom timestamp ada sebelum dijadikan index
             if 'timestamp' in df.columns:
                 df_grafik = df.set_index('timestamp')
-                # Pilih kolom yang pasti ada di data Anda
-                kolom_grafik = ['suhu', 'kelembapan', 'tekanan']
+                kolom_grafik = ['suhu', 'kelembapan', 'tekanan'] # Kolom yang ingin digrafikkan
                 kolom_valid = [kol for kol in kolom_grafik if kol in df_grafik.columns]
                 if kolom_valid:
-                     st.line_chart(df_grafik[kolom_valid])
+                     # Menggunakan st.area_chart
+                     st.area_chart(df_grafik[kolom_valid]) 
                 else:
                      st.warning("Kolom data untuk grafik tidak ditemukan.")
             else:
                 st.warning("Kolom 'timestamp' tidak ditemukan untuk membuat grafik.")
 
 
-            # --- DATA MENTAH ---
-            st.subheader("📋 Data Mentah (10 Data Terakhir)")
-            if 'timestamp' in df.columns:
-                st.dataframe(df.sort_values(by='timestamp', ascending=False).head(10).set_index('timestamp'))
-            else:
-                 st.dataframe(df.tail(10)) # Tampilkan tanpa index jika timestamp bermasalah
+            # --- DATA MENTAH (DALAM EXPANDER AGAR LEBIH RAPI) ---
+            with st.expander("Lihat Data Mentah (10 Terakhir)"): # Gunakan expander
+                 if 'timestamp' in df.columns:
+                     st.dataframe(df.sort_values(by='timestamp', ascending=False).head(10).set_index('timestamp'))
+                 else:
+                      st.dataframe(df.tail(10)) 
 
     # Tunggu 15 detik sebelum refresh
     time.sleep(15)
