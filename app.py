@@ -4,7 +4,7 @@ import requests
 import time
 from datetime import datetime
 import os
-import pytz # Library untuk timezone
+import pytz # Library penting untuk timezone
 
 # ----------------- KONFIGURASI HALAMAN -----------------
 st.set_page_config(
@@ -27,7 +27,7 @@ def baca_data_dari_api():
     """Mengambil data JSON dari API, mengonversi ke DataFrame pandas, dan memproses timestamp ke WIB secara eksplisit."""
     try:
         response = requests.get(API_URL, timeout=10)
-        response.raise_for_status()
+        response.raise_for_status() # Error jika status bukan 2xx
         data = response.json()
 
         if not data:
@@ -36,38 +36,44 @@ def baca_data_dari_api():
         df = pd.DataFrame(data)
 
         # --- VALIDASI DAN KONVERSI TIMESTAMP (EKSPLISIT) ---
+        # 1. Pastikan kolom 'timestamp' ada
         if 'timestamp' not in df.columns:
             st.error("Kolom 'timestamp' tidak ditemukan.")
             return None
 
+        # 2. Coba konversi kolom 'timestamp' ke tipe numerik (angka).
+        #    errors='coerce' akan mengubah nilai yang tidak bisa dikonversi menjadi NaN (Not a Number).
         df['timestamp_numeric'] = pd.to_numeric(df['timestamp'], errors='coerce')
+
+        # 3. Hapus baris di mana konversi ke numerik gagal (timestamp_numeric adalah NaN).
         df.dropna(subset=['timestamp_numeric'], inplace=True)
         if df.empty:
             st.warning("Data timestamp tidak valid.")
             return None
 
-        # 1. Konversi UNIX timestamp ke Datetime pandas, dan langsung tandai sebagai UTC
+        # 4. Konversi UNIX timestamp (asumsi dalam detik dan UTC) ke objek Datetime pandas (masih dalam UTC).
+        #    Gunakan kolom yang sudah pasti numerik ('timestamp_numeric').
         df['timestamp_utc'] = pd.to_datetime(df['timestamp_numeric'], unit='s', utc=True, errors='coerce')
 
+        # 5. Hapus baris di mana konversi ke Datetime gagal.
         df.dropna(subset=['timestamp_utc'], inplace=True)
         if df.empty:
             st.warning("Gagal konversi timestamp ke datetime UTC.")
             return None
 
-        # 2. Tentukan zona waktu WIB
+        # 6. Tentukan zona waktu WIB
         zona_wib = pytz.timezone('Asia/Jakarta')
 
-        # 3. Konversi dari UTC ke zona waktu WIB
+        # 7. Konversi dari UTC ke zona waktu WIB
         #    Gunakan .dt.tz_convert() pada kolom yang sudah timezone-aware (UTC)
         df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib)
-        # ----------------------------------------------------
+        # -------------------------------------------------------------
 
-        # Hapus kolom sementara
+        # Opsional: Hapus kolom sementara jika tidak dibutuhkan lagi
         # df = df.drop(columns=['timestamp_numeric', 'timestamp_utc'])
 
         return df
 
-    # ... (blok except tetap sama) ...
     except requests.exceptions.ConnectionError:
         st.error(f"Gagal terhubung ke server API di {API_URL}.")
         return None
@@ -83,9 +89,8 @@ def baca_data_dari_api():
 
 # --- FUNGSI tentukan_status_cuaca() TETAP SAMA ---
 def tentukan_status_cuaca(data):
-    # ... (kode fungsi ini tidak perlu diubah) ...
     imcs = data.get('imcs', 0.0)
-    cahaya = data.get('cahaya', 4095)
+    cahaya = data.get('cahaya', 4095) # Default gelap jika data tidak ada
     kelembapan = data.get('kelembapan', 0.0)
     AMBANG_CERAH = 800
     AMBANG_BERAWAN = 2000
@@ -102,7 +107,6 @@ def tentukan_status_cuaca(data):
     elif cahaya < AMBANG_MENDUNG: return "Berawan", "☁️"
     else: return "Sangat Mendung / Berkabut", "🌫️"
 
-
 # --- LAYOUT UTAMA & LOOP UTAMA TETAP SAMA ---
 placeholder = st.empty()
 while True:
@@ -115,7 +119,7 @@ while True:
             waktu_update_str = "N/A"
             if 'timestamp' in data_terkini and pd.notnull(data_terkini['timestamp']):
                  try:
-                      # Format waktu, sekarang sudah dalam zona waktu WIB
+                      # Format waktu, seharusnya sudah dalam zona waktu WIB
                       waktu_update_str = data_terkini['timestamp'].strftime('%d %b %Y, %H:%M:%S')
                  except AttributeError:
                       waktu_update_str = "Format Waktu Salah"
@@ -123,7 +127,7 @@ while True:
             col_info, col_status = st.columns([3, 2])
             with col_info:
                 st.subheader(f"📍 Data Sensor Terkini")
-                st.caption(f"(Diperbarui pada: {waktu_update_str} WIB)") # Tambahkan WIB di sini jika perlu
+                st.caption(f"(Diperbarui pada: {waktu_update_str} WIB)") # Pastikan WIB tertulis di sini
             with col_status:
                  st.subheader(f"Kesimpulan Cuaca:")
                  st.markdown(f"<h2 style='text-align: left;'>{status_emoji} {status_text}</h2>", unsafe_allow_html=True)
@@ -171,3 +175,4 @@ while True:
              st.info("🔄 Menunggu atau mencoba mengambil data terbaru dari sensor...")
              st.spinner("Memuat data...")
     time.sleep(15)
+
