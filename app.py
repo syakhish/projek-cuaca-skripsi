@@ -131,7 +131,7 @@ while True:
 
 
             # --- DATA MENTAH (DALAM EXPANDER) ---
-            with st.expander("Lihat Data Mentah (10 Terakhir)"):
+            with st.expander("Lihat Data (10 Terakhir)"):
                  if 'timestamp' in df.columns:
                      st.dataframe(df.sort_values(by='timestamp', ascending=False).head(10).set_index('timestamp'))
                  else:
@@ -139,4 +139,5 @@ while True:
 
     # Tunggu 15 detik sebelum refresh
     time.sleep(15)
+
 
