@@ -8,59 +8,69 @@ import os
 # ----------------- KONFIGURASI HALAMAN -----------------
 st.set_page_config(
     page_title="Dasbor Monitoring Cuaca",
-    page_icon="🌦️", # Menggunakan emoji yang lebih relevan
+    page_icon="🌦️",
     layout="wide",
 )
 
-# --- PASTIKAN USERNAME ANDA BENAR (SUDAH SESUAI) ---
+# --- PASTIKAN USERNAME ANDA BENAR ---
 API_URL = "http://syakhish.pythonanywhere.com/get_data"
-# -----------------------------------------------------
+# ------------------------------------
 
 # ----------------- JUDUL APLIKASI -----------------
 st.title("🌦️ Dasbor Monitoring Cuaca Real-Time")
 st.markdown("---")
 
-# ----------------- FUNGSI BACA DATA DARI API -----------------
-# Fungsi ini mengambil data dari server API Anda, dengan cache 15 detik.
-@st.cache_data(ttl=15)
+# ----------------- FUNGSI BACA DATA DARI API (LEBIH ROBUST) -----------------
+@st.cache_data(ttl=15) # Cache data selama 15 detik
 def baca_data_dari_api():
-    """Mengambil data JSON dari API, mengonversi ke DataFrame pandas, dan memproses timestamp."""
+    """Mengambil data JSON dari API, mengonversi ke DataFrame pandas, dan memproses timestamp dengan validasi."""
     try:
-        # Melakukan permintaan ke URL API dengan timeout
         response = requests.get(API_URL, timeout=10)
-        # Memeriksa apakah request berhasil (status code 2xx)
-        response.raise_for_status()
+        response.raise_for_status() # Error jika status bukan 2xx
         data = response.json()
 
-        # Jika API mengembalikan list kosong, berarti belum ada data
         if not data:
-            # st.info("Menunggu data pertama masuk dari sensor...") # Bisa diaktifkan jika perlu
+            # st.info("Menunggu data pertama masuk dari sensor...")
             return None
 
-        # Ubah data JSON (list of dictionaries) menjadi DataFrame pandas
         df = pd.DataFrame(data)
 
-        # --- VALIDASI DAN KONVERSI TIMESTAMP ---
+        # --- VALIDASI DAN KONVERSI TIMESTAMP (LEBIH HATI-HATI) ---
         # 1. Pastikan kolom 'timestamp' ada
         if 'timestamp' not in df.columns:
             st.error("Data dari API tidak memiliki kolom 'timestamp'.")
             return None
-        # 2. Coba konversi ke numerik, paksa error menjadi NaN (Not a Number)
-        df['timestamp'] = pd.to_numeric(df['timestamp'], errors='coerce')
-        # 3. Hapus baris di mana konversi gagal (timestamp adalah NaN)
-        df.dropna(subset=['timestamp'], inplace=True)
+
+        # 2. Coba konversi kolom 'timestamp' ke tipe numerik (angka).
+        #    errors='coerce' akan mengubah nilai yang tidak bisa dikonversi menjadi NaN (Not a Number).
+        df['timestamp_numeric'] = pd.to_numeric(df['timestamp'], errors='coerce')
+
+        # 3. Hapus baris di mana konversi ke numerik gagal (timestamp_numeric adalah NaN).
+        df.dropna(subset=['timestamp_numeric'], inplace=True)
         if df.empty:
-            st.warning("Data timestamp tidak valid atau kosong setelah konversi.")
+            st.warning("Data timestamp tidak valid atau kosong setelah konversi ke numerik.")
             return None
 
-        # 4. Konversi UNIX timestamp (asumsi UTC) ke objek Datetime (masih UTC)
-        df['timestamp_utc'] = pd.to_datetime(df['timestamp'], unit='s')
-        # 5. Konversi dari UTC ke WIB (UTC+7)
+        # 4. Konversi UNIX timestamp (asumsi dalam detik dan UTC) ke objek Datetime pandas (masih dalam UTC).
+        #    Gunakan kolom yang sudah pasti numerik ('timestamp_numeric').
+        df['timestamp_utc'] = pd.to_datetime(df['timestamp_numeric'], unit='s', errors='coerce')
+
+        # 5. Hapus baris di mana konversi ke Datetime gagal.
+        df.dropna(subset=['timestamp_utc'], inplace=True)
+        if df.empty:
+            st.warning("Data timestamp tidak valid setelah konversi ke datetime.")
+            return None
+
+        # 6. Konversi dari zona waktu UTC ke WIB (UTC+7).
         df['timestamp'] = df['timestamp_utc'] + pd.Timedelta(hours=7)
-        # ----------------------------------------
+        # -------------------------------------------------------------
+
+        # Opsional: Hapus kolom sementara jika tidak dibutuhkan lagi
+        # df = df.drop(columns=['timestamp_numeric', 'timestamp_utc'])
 
         return df
 
+    # ... (blok except tetap sama seperti sebelumnya) ...
     except requests.exceptions.ConnectionError:
         st.error(f"Gagal terhubung ke server API di {API_URL}. Periksa URL dan koneksi internet server.")
         return None
@@ -74,10 +84,10 @@ def baca_data_dari_api():
         st.error(f"Terjadi error saat memproses data dari API: {e}")
         return None
 
-# ----------------- FUNGSI PENENTU STATUS CUACA & EMOJI -----------------
+
+# --- FUNGSI tentukan_status_cuaca() TETAP SAMA ---
 def tentukan_status_cuaca(data):
-    """ Menganalisis data sensor terkini dan memberikan kesimpulan status cuaca beserta emoji. """
-    # Gunakan .get() untuk mengambil nilai dengan aman, berikan default jika kunci tidak ada
+    # ... (kode fungsi ini tidak perlu diubah) ...
     imcs = data.get('imcs', 0.0)
     cahaya = data.get('cahaya', 4095) # Default gelap jika data tidak ada
     kelembapan = data.get('kelembapan', 0.0)
@@ -88,13 +98,12 @@ def tentukan_status_cuaca(data):
     AMBANG_MENDUNG = 3000
     AMBANG_MALAM = 3800
 
-    # Pastikan tipe data benar sebelum membandingkan, tangani potensi error
     try:
         cahaya = int(cahaya)
         imcs = float(imcs)
         kelembapan = float(kelembapan)
     except (ValueError, TypeError, AttributeError):
-         return "Data Tidak Valid", "❓" # Jika data tidak bisa dikonversi
+         return "Data Tidak Valid", "❓"
 
     if cahaya > AMBANG_MALAM:
         return "Malam Hari", "🌃"
@@ -114,56 +123,43 @@ def tentukan_status_cuaca(data):
         return "Cerah Berawan", "🌥️"
     elif cahaya < AMBANG_MENDUNG:
         return "Berawan", "☁️"
-    else: # Kondisi cahaya di atas AMBANG_MENDUNG tapi imcs tidak cukup tinggi
+    else:
          return "Sangat Mendung / Berkabut", "🌫️"
 
-# ----------------- LAYOUT UTAMA APLIKASI -----------------
-placeholder = st.empty() # Placeholder untuk update elemen tanpa reload
+# --- LAYOUT UTAMA & LOOP UTAMA TETAP SAMA ---
+placeholder = st.empty()
 
-# ----------------- LOOP UTAMA (UNTUK REAL-TIME) -----------------
 while True:
-    # Ambil data terbaru dari API (akan menggunakan cache jika belum 15 detik)
     df = baca_data_dari_api()
 
-    # Hanya lanjutkan jika data berhasil diambil dan tidak kosong
     if df is not None and not df.empty:
-        with placeholder.container(): # Menggambar ulang semua elemen di dalam container ini
-            # --- BAGIAN DATA TERKINI & KESIMPULAN ---
-            # Ambil baris data terakhir
+        with placeholder.container():
+            # --- DATA TERKINI & KESIMPULAN ---
             data_terkini = df.iloc[-1]
-            # Tentukan status cuaca berdasarkan data terakhir
             status_text, status_emoji = tentukan_status_cuaca(data_terkini)
 
-            # Format waktu update
-            waktu_update_str = "N/A" # Default jika timestamp bermasalah
+            waktu_update_str = "N/A"
             if 'timestamp' in data_terkini and pd.notnull(data_terkini['timestamp']):
                  try:
                       waktu_update_str = data_terkini['timestamp'].strftime('%d %b %Y, %H:%M:%S')
                  except AttributeError:
                       waktu_update_str = "Format Waktu Salah"
 
-
-            # Tampilkan Waktu Update dan Kesimpulan dalam dua kolom
             col_info, col_status = st.columns([3, 2])
             with col_info:
                 st.subheader(f"📍 Data Sensor Terkini")
                 st.caption(f"(Diperbarui pada: {waktu_update_str} WIB)")
             with col_status:
                  st.subheader(f"Kesimpulan Cuaca:")
-                 # Gunakan font lebih besar untuk kesimpulan
                  st.markdown(f"<h2 style='text-align: left;'>{status_emoji} {status_text}</h2>", unsafe_allow_html=True)
 
-            st.markdown("---") # Garis pemisah
+            st.markdown("---")
 
-            # --- BAGIAN METRIK DETAIL ---
-            # Siapkan kolom untuk metrik
+            # --- METRIK DETAIL ---
             k1, k2, k3, k4, k5 = st.columns(5)
-
-            # Hitung delta (perubahan dari data sebelumnya) jika memungkinkan
             delta_suhu = df['suhu'].iloc[-1] - df['suhu'].iloc[-2] if len(df) > 1 else 0
             delta_kelembapan = df['kelembapan'].iloc[-1] - df['kelembapan'].iloc[-2] if len(df) > 1 else 0
 
-            # Tampilkan metrik dengan .get() untuk keamanan jika kolom tidak ada
             k1.metric(label="🌡️ Suhu (°C)", value=f"{data_terkini.get('suhu', 0):.1f}", delta=f"{delta_suhu:.1f}")
             k2.metric(label="💧 Kelembapan (%)", value=f"{data_terkini.get('kelembapan', 0):.1f}", delta=f"{delta_kelembapan:.1f}")
             k3.metric(label="🌀 Tekanan (hPa)", value=f"{data_terkini.get('tekanan', 0):.1f}")
@@ -171,52 +167,39 @@ while True:
             k5.metric(label="☔️ IMCS", value=f"{data_terkini.get('imcs', 0):.2f}",
                       help="Indeks di atas 1.0 menunjukkan peluang hujan tinggi")
 
-            st.markdown("---") # Garis pemisah
+            st.markdown("---")
 
-            # --- BAGIAN GRAFIK HISTORIS (LINE CHART) ---
+            # --- GRAFIK HISTORIS (LINE CHART) ---
             st.subheader("📈 Grafik Historis Data Sensor")
-            # Pastikan kolom timestamp ada sebelum membuat index
             if 'timestamp' in df.columns:
                 try:
-                    # Buat DataFrame baru dengan timestamp sebagai index
                     df_grafik = df.set_index('timestamp')
-                    # Tentukan kolom yang ingin digambarkan
                     kolom_grafik = ['suhu', 'kelembapan', 'tekanan']
-                    # Filter hanya kolom yang benar-benar ada di DataFrame
                     kolom_valid = [kol for kol in kolom_grafik if kol in df_grafik.columns]
                     if kolom_valid:
-                        # Tampilkan grafik garis
                         st.line_chart(df_grafik[kolom_valid])
                     else:
                         st.warning("Kolom data ('suhu', 'kelembapan', 'tekanan') tidak ditemukan.")
                 except Exception as e:
-                    # Tangani error jika gagal membuat index atau grafik
                     st.error(f"Gagal membuat grafik: {e}")
             else:
                  st.warning("Kolom 'timestamp' tidak ditemukan untuk membuat grafik.")
 
-
-            # --- BAGIAN DATA MENTAH (DALAM EXPANDER) ---
-            # Gunakan expander agar tidak terlalu memenuhi layar
+            # --- DATA MENTAH (DALAM EXPANDER) ---
             with st.expander("Lihat Data Lengkap (Hingga 100 Data Terakhir)"):
-                 # Pastikan kolom timestamp ada sebelum diurutkan dan dijadikan index
                  if 'timestamp' in df.columns:
                      try:
-                         # Tampilkan DataFrame, urutkan dari terbaru, jadikan timestamp index
                          st.dataframe(df.sort_values(by='timestamp', ascending=False).set_index('timestamp'))
                      except Exception as e:
                           st.error(f"Gagal menampilkan tabel data: {e}")
-                          st.dataframe(df) # Tampilkan tanpa index jika gagal
+                          st.dataframe(df)
                  else:
-                      st.dataframe(df.tail(100)) # Tampilkan 100 data terakhir jika timestamp bermasalah
+                      st.dataframe(df.tail(100))
 
     else:
-         # Jika df is None (gagal ambil data API) atau kosong (API belum ada data)
          with placeholder.container():
              st.info("🔄 Menunggu atau mencoba mengambil data terbaru dari sensor...")
-             # Tambahkan indikator loading
              st.spinner("Memuat data...")
 
-    # Tunggu 15 detik sebelum mengulang loop dan mengambil data lagi
     time.sleep(15)
 
