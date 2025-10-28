@@ -114,6 +114,13 @@ while True:
     else:
         st.write("DEBUG (Loop): DataFrame kosong atau None setelah baca_data_dari_api.") # DEBUG C
     # -----------------------------------
+    # --- DEBUGGING: Tampilkan Waktu Server Streamlit ---
+        now_server_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
+        zona_wib = pytz.timezone('Asia/Jakarta')
+        now_server_wib = now_server_utc.astimezone(zona_wib)
+        st.write(f"DEBUG SERVER TIME: Waktu UTC Server saat ini:", now_server_utc.strftime('%Y-%m-%d %H:%M:%S %Z%z'))
+        st.write(f"DEBUG SERVER TIME: Waktu WIB Server saat ini:", now_server_wib.strftime('%Y-%m-%d %H:%M:%S %Z%z'))
+        # ---------------------------------------------------
 
     if df is not None and not df.empty:
         with placeholder.container():
@@ -179,4 +186,5 @@ while True:
 
     # Tunggu 10 detik sebelum refresh
     time.sleep(10)
+
 
