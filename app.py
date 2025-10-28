@@ -21,23 +21,21 @@ API_URL = "http://syakhish.pythonanywhere.com/get_data"
 st.title("🌦️ Dasbor Monitoring Cuaca Real-Time")
 st.markdown("---")
 
-# ----------------- FUNGSI BACA DATA DARI API (DENGAN DEBUGGING LANJUTAN) -----------------
-# @st.cache_data(ttl=15) # <<< NONAKTIFKAN CACHE SEMENTARA
+# ----------------- FUNGSI BACA DATA DARI API (TANPA CACHE, DENGAN DEBUGGING) -----------------
+# @st.cache_data(ttl=15) # <<< CACHE DINONAKTIFKAN TOTAL UNTUK DEBUGGING
 def baca_data_dari_api():
     """Mengambil data JSON dari API, mengonversi timestamp ke WIB, dengan debugging rinci."""
     try:
-        st.write(f"DEBUG: Mengambil data dari {API_URL}...") # DEBUG 1
-        response = requests.get(API_URL, timeout=10)
+        st.write(f"DEBUG (baca_data): Mencoba mengambil data dari {API_URL}...") # DEBUG 1
+        response = requests.get(API_URL, timeout=15) # Tambah timeout sedikit
         response.raise_for_status()
         data = response.json()
 
-        if not data:
-            st.warning("DEBUG: Data JSON dari API kosong.") # DEBUG 2
-            return None
+        if not data or not isinstance(data, list): # Cek jika data kosong ATAU bukan list
+             st.warning("DEBUG (baca_data): Data JSON dari API kosong atau formatnya bukan list.") # DEBUG 2
+             return None
 
-        # --- DEBUGGING MENTAH ---
-        st.write("DEBUG: Data JSON mentah terakhir diterima:", data[-1] if isinstance(data, list) and data else "Format data tidak sesuai/kosong") # DEBUG 3
-        # ------------------------
+        st.write(f"DEBUG (baca_data): Data JSON mentah terakhir diterima:", data[-1]) # DEBUG 3
 
         df = pd.DataFrame(data)
 
@@ -46,9 +44,8 @@ def baca_data_dari_api():
             st.error("Kolom 'timestamp' tidak ditemukan.")
             return None
 
-        # Ambil timestamp terakhir untuk debugging
         raw_ts = df['timestamp'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp mentah terakhir dari DataFrame:", raw_ts, type(raw_ts)) # DEBUG 4
+        st.write(f"DEBUG (baca_data): Nilai timestamp mentah terakhir dari DataFrame:", raw_ts, type(raw_ts)) # DEBUG 4
 
         df['timestamp_numeric'] = pd.to_numeric(df['timestamp'], errors='coerce')
         df.dropna(subset=['timestamp_numeric'], inplace=True)
@@ -57,7 +54,7 @@ def baca_data_dari_api():
             return None
 
         num_ts = df['timestamp_numeric'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp setelah to_numeric:", num_ts, type(num_ts)) # DEBUG 5
+        st.write(f"DEBUG (baca_data): Nilai timestamp setelah to_numeric:", num_ts, type(num_ts)) # DEBUG 5
 
         # 1. Konversi UNIX timestamp ke Datetime pandas (UTC)
         df['timestamp_utc'] = pd.to_datetime(df['timestamp_numeric'], unit='s', utc=True, errors='coerce')
@@ -67,7 +64,7 @@ def baca_data_dari_api():
             return None
 
         utc_dt = df['timestamp_utc'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp setelah konversi ke UTC:", utc_dt, type(utc_dt)) # DEBUG 6
+        st.write(f"DEBUG (baca_data): Nilai timestamp setelah konversi ke UTC:", utc_dt, type(utc_dt)) # DEBUG 6
 
         # 2. Tentukan zona waktu WIB
         zona_wib = pytz.timezone('Asia/Jakarta')
@@ -76,16 +73,17 @@ def baca_data_dari_api():
         df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib)
 
         wib_dt = df['timestamp'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp FINAL setelah konversi ke WIB:", wib_dt, type(wib_dt)) # DEBUG 7
+        st.write(f"DEBUG (baca_data): Nilai timestamp FINAL (WIB) di DataFrame:", wib_dt, type(wib_dt)) # DEBUG 7
         # -------------------------------------------------------------
 
         return df
 
-    # ... (blok except tetap sama) ...
-    except requests.exceptions.ConnectionError: st.error(f"Gagal terhubung ke server API di {API_URL}.") ; return None
-    except requests.exceptions.Timeout: st.error("Koneksi ke server API timeout.") ; return None
-    except requests.exceptions.RequestException as e: st.error(f"Error saat request ke API: {e}") ; return None
-    except Exception as e: st.error(f"Error saat memproses data API: {e}") ; return None
+    except Exception as e:
+        # Tampilkan error lengkap saat debugging
+        st.error(f"Error di baca_data_dari_api: {e}", icon="🚨")
+        import traceback
+        st.code(traceback.format_exc()) # Tampilkan traceback error
+        return None
 
 # --- FUNGSI tentukan_status_cuaca() TETAP SAMA ---
 def tentukan_status_cuaca(data):
@@ -102,22 +100,20 @@ def tentukan_status_cuaca(data):
     elif cahaya < AMBANG_MENDUNG: return "Berawan", "☁️"
     else: return "Sangat Mendung / Berkabut", "🌫️"
 
-# --- LAYOUT UTAMA & LOOP UTAMA TETAP SAMA ---
+# --- LAYOUT UTAMA & LOOP UTAMA ---
 placeholder = st.empty()
 while True:
-    # --- NONAKTIFKAN CACHE SEMENTARA ---
-    st.cache_data.clear() # Hapus cache setiap iterasi
-    # ------------------------------------
-    df = baca_data_dari_api() # Panggil fungsi baca data
+    st.write("DEBUG (Loop): Memulai iterasi loop...") # DEBUG A
+    # Panggil fungsi baca data (TANPA CACHE!)
+    df = baca_data_dari_api()
 
-    # --- TAMBAHAN DEBUGGING: Tampilkan DataFrame hasil baca ---
+    # --- DEBUGGING SETELAH BACA DATA ---
     if df is not None:
-        st.write("DEBUG: Isi DataFrame setelah dibaca dan dikonversi:") # DEBUG 8
-        st.dataframe(df.tail(5)) # Tampilkan 5 data terakhir
+        st.write("DEBUG (Loop): DataFrame berhasil dibaca, jumlah baris:", len(df)) # DEBUG B
+        st.dataframe(df.tail(2)) # Tampilkan 2 data terakhir hasil konversi
     else:
-        st.write("DEBUG: DataFrame kosong atau None.") # DEBUG 9
-    # ---------------------------------------------------------
-
+        st.write("DEBUG (Loop): DataFrame kosong atau None setelah baca_data_dari_api.") # DEBUG C
+    # -----------------------------------
 
     if df is not None and not df.empty:
         with placeholder.container():
@@ -125,26 +121,26 @@ while True:
             data_terkini = df.iloc[-1]
             status_text, status_emoji = tentukan_status_cuaca(data_terkini)
             waktu_update_str = "N/A"
-            final_timestamp_object = None # Untuk debugging tambahan
+            final_timestamp_object_wib = None
 
             if 'timestamp' in data_terkini and pd.notnull(data_terkini['timestamp']):
                  try:
-                      final_timestamp_object = data_terkini['timestamp'] # Simpan objek datetime
+                      final_timestamp_object_wib = data_terkini['timestamp']
                       # Format waktu final yang sudah WIB
-                      waktu_update_str = final_timestamp_object.strftime('%d %b %Y, %H:%M:%S')
+                      waktu_update_str = final_timestamp_object_wib.strftime('%d %b %Y, %H:%M:%S')
                  except AttributeError as e:
-                      st.error(f"DEBUG: Error saat formatting waktu: {e}") # DEBUG 10
-                      waktu_update_str = f"Error Format ({type(final_timestamp_object)})"
+                      st.error(f"DEBUG (Loop): Error saat formatting waktu: {e}")
+                      waktu_update_str = f"Error Format ({type(final_timestamp_object_wib)})"
 
-            # --- TAMBAHAN DEBUGGING: Tampilkan waktu yang akan dicetak ---
-            st.write(f"DEBUG: Objek Waktu Final sebelum strftime:", final_timestamp_object) # DEBUG 11
-            st.write(f"DEBUG: Nilai waktu_update_str yang akan ditampilkan:", waktu_update_str) # DEBUG 12
-            # -------------------------------------------------------------
+            # --- DEBUGGING SEBELUM TAMPIL ---
+            st.write(f"DEBUG (Loop): Objek Waktu Final (WIB) sebelum strftime:", final_timestamp_object_wib) # DEBUG D
+            st.write(f"DEBUG (Loop): Nilai waktu_update_str yang akan ditampilkan:", waktu_update_str) # DEBUG E
+            # --------------------------------
 
             col_info, col_status = st.columns([3, 2])
             with col_info:
                 st.subheader(f"📍 Data Sensor Terkini")
-                st.caption(f"(Diperbarui pada: {waktu_update_str} WIB)")
+                st.caption(f"(Diperbarui pada: {waktu_update_str} WIB)") # Pastikan WIB tertulis
             with col_status:
                  st.subheader(f"Kesimpulan Cuaca:")
                  st.markdown(f"<h2 style='text-align: left;'>{status_emoji} {status_text}</h2>", unsafe_allow_html=True)
@@ -181,7 +177,6 @@ while True:
              st.info("🔄 Menunggu atau mencoba mengambil data terbaru dari sensor...")
              st.spinner("Memuat data...")
 
-    # Tunggu 15 detik sebelum refresh
-    # Kurangi waktu tunggu saat debugging agar lebih cepat terlihat
-    time.sleep(10) # << Ubah ke 10 detik untuk debugging
+    # Tunggu 10 detik sebelum refresh
+    time.sleep(10)
 
