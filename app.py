@@ -21,23 +21,23 @@ API_URL = "http://syakhish.pythonanywhere.com/get_data"
 st.title("🌦️ Dasbor Monitoring Cuaca Real-Time")
 st.markdown("---")
 
-# ----------------- FUNGSI BACA DATA DARI API (DENGAN DEBUGGING) -----------------
-# @st.cache_data(ttl=15) # <<< SEMENTARA NONAKTIFKAN CACHE UNTUK DEBUGGING
+# ----------------- FUNGSI BACA DATA DARI API (DENGAN DEBUGGING LANJUTAN) -----------------
+# @st.cache_data(ttl=15) # <<< NONAKTIFKAN CACHE SEMENTARA
 def baca_data_dari_api():
-    """Mengambil data JSON dari API, mengonversi ke DataFrame pandas, dan memproses timestamp ke WIB secara eksplisit, dengan debugging."""
+    """Mengambil data JSON dari API, mengonversi timestamp ke WIB, dengan debugging rinci."""
     try:
-        st.write(f"DEBUG: Mencoba mengambil data dari {API_URL}...") # DEBUG 1
+        st.write(f"DEBUG: Mengambil data dari {API_URL}...") # DEBUG 1
         response = requests.get(API_URL, timeout=10)
-        response.raise_for_status() # Error jika status bukan 2xx
+        response.raise_for_status()
         data = response.json()
 
         if not data:
             st.warning("DEBUG: Data JSON dari API kosong.") # DEBUG 2
             return None
 
-        # --- TAMBAHAN DEBUGGING: Tampilkan data mentah ---
-        st.write("DEBUG: Data JSON mentah terakhir diterima:", data[-1] if data else "Data kosong") # DEBUG 3
-        # --------------------------------------------------
+        # --- DEBUGGING MENTAH ---
+        st.write("DEBUG: Data JSON mentah terakhir diterima:", data[-1] if isinstance(data, list) and data else "Format data tidak sesuai/kosong") # DEBUG 3
+        # ------------------------
 
         df = pd.DataFrame(data)
 
@@ -46,9 +46,9 @@ def baca_data_dari_api():
             st.error("Kolom 'timestamp' tidak ditemukan.")
             return None
 
-        # Ambil timestamp terakhir untuk debugging lebih detail
-        raw_timestamp_akhir = df['timestamp'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp mentah terakhir dari DataFrame:", raw_timestamp_akhir) # DEBUG 4
+        # Ambil timestamp terakhir untuk debugging
+        raw_ts = df['timestamp'].iloc[-1]
+        st.write(f"DEBUG: Nilai timestamp mentah terakhir dari DataFrame:", raw_ts, type(raw_ts)) # DEBUG 4
 
         df['timestamp_numeric'] = pd.to_numeric(df['timestamp'], errors='coerce')
         df.dropna(subset=['timestamp_numeric'], inplace=True)
@@ -56,21 +56,18 @@ def baca_data_dari_api():
             st.warning("Data timestamp tidak valid setelah konversi ke numerik.")
             return None
 
-        numeric_timestamp_akhir = df['timestamp_numeric'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp setelah to_numeric:", numeric_timestamp_akhir) # DEBUG 5
-
+        num_ts = df['timestamp_numeric'].iloc[-1]
+        st.write(f"DEBUG: Nilai timestamp setelah to_numeric:", num_ts, type(num_ts)) # DEBUG 5
 
         # 1. Konversi UNIX timestamp ke Datetime pandas (UTC)
         df['timestamp_utc'] = pd.to_datetime(df['timestamp_numeric'], unit='s', utc=True, errors='coerce')
-
         df.dropna(subset=['timestamp_utc'], inplace=True)
         if df.empty:
             st.warning("Gagal konversi timestamp ke datetime UTC.")
             return None
 
-        utc_datetime_akhir = df['timestamp_utc'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp setelah konversi ke UTC:", utc_datetime_akhir) # DEBUG 6
-
+        utc_dt = df['timestamp_utc'].iloc[-1]
+        st.write(f"DEBUG: Nilai timestamp setelah konversi ke UTC:", utc_dt, type(utc_dt)) # DEBUG 6
 
         # 2. Tentukan zona waktu WIB
         zona_wib = pytz.timezone('Asia/Jakarta')
@@ -78,25 +75,17 @@ def baca_data_dari_api():
         # 3. Konversi dari UTC ke zona waktu WIB
         df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib)
 
-        wib_datetime_akhir = df['timestamp'].iloc[-1]
-        st.write(f"DEBUG: Nilai timestamp FINAL setelah konversi ke WIB:", wib_datetime_akhir) # DEBUG 7
-        # ----------------------------------------------------
+        wib_dt = df['timestamp'].iloc[-1]
+        st.write(f"DEBUG: Nilai timestamp FINAL setelah konversi ke WIB:", wib_dt, type(wib_dt)) # DEBUG 7
+        # -------------------------------------------------------------
 
         return df
 
     # ... (blok except tetap sama) ...
-    except requests.exceptions.ConnectionError:
-        st.error(f"Gagal terhubung ke server API di {API_URL}.")
-        return None
-    except requests.exceptions.Timeout:
-        st.error("Koneksi ke server API timeout.")
-        return None
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error saat request ke API: {e}")
-        return None
-    except Exception as e:
-        st.error(f"Error saat memproses data API: {e}")
-        return None
+    except requests.exceptions.ConnectionError: st.error(f"Gagal terhubung ke server API di {API_URL}.") ; return None
+    except requests.exceptions.Timeout: st.error("Koneksi ke server API timeout.") ; return None
+    except requests.exceptions.RequestException as e: st.error(f"Error saat request ke API: {e}") ; return None
+    except Exception as e: st.error(f"Error saat memproses data API: {e}") ; return None
 
 # --- FUNGSI tentukan_status_cuaca() TETAP SAMA ---
 def tentukan_status_cuaca(data):
@@ -117,10 +106,18 @@ def tentukan_status_cuaca(data):
 placeholder = st.empty()
 while True:
     # --- NONAKTIFKAN CACHE SEMENTARA ---
-    # Hapus cache agar kita selalu melihat hasil terbaru saat debugging
-    st.cache_data.clear()
+    st.cache_data.clear() # Hapus cache setiap iterasi
     # ------------------------------------
-    df = baca_data_dari_api() # Panggil fungsi baca data (tanpa cache)
+    df = baca_data_dari_api() # Panggil fungsi baca data
+
+    # --- TAMBAHAN DEBUGGING: Tampilkan DataFrame hasil baca ---
+    if df is not None:
+        st.write("DEBUG: Isi DataFrame setelah dibaca dan dikonversi:") # DEBUG 8
+        st.dataframe(df.tail(5)) # Tampilkan 5 data terakhir
+    else:
+        st.write("DEBUG: DataFrame kosong atau None.") # DEBUG 9
+    # ---------------------------------------------------------
+
 
     if df is not None and not df.empty:
         with placeholder.container():
@@ -128,15 +125,20 @@ while True:
             data_terkini = df.iloc[-1]
             status_text, status_emoji = tentukan_status_cuaca(data_terkini)
             waktu_update_str = "N/A"
+            final_timestamp_object = None # Untuk debugging tambahan
+
             if 'timestamp' in data_terkini and pd.notnull(data_terkini['timestamp']):
                  try:
+                      final_timestamp_object = data_terkini['timestamp'] # Simpan objek datetime
                       # Format waktu final yang sudah WIB
-                      waktu_update_str = data_terkini['timestamp'].strftime('%d %b %Y, %H:%M:%S')
-                 except AttributeError:
-                      waktu_update_str = "Format Waktu Salah"
+                      waktu_update_str = final_timestamp_object.strftime('%d %b %Y, %H:%M:%S')
+                 except AttributeError as e:
+                      st.error(f"DEBUG: Error saat formatting waktu: {e}") # DEBUG 10
+                      waktu_update_str = f"Error Format ({type(final_timestamp_object)})"
 
             # --- TAMBAHAN DEBUGGING: Tampilkan waktu yang akan dicetak ---
-            st.write(f"DEBUG: Nilai waktu_update_str yang akan ditampilkan:", waktu_update_str) # DEBUG 8
+            st.write(f"DEBUG: Objek Waktu Final sebelum strftime:", final_timestamp_object) # DEBUG 11
+            st.write(f"DEBUG: Nilai waktu_update_str yang akan ditampilkan:", waktu_update_str) # DEBUG 12
             # -------------------------------------------------------------
 
             col_info, col_status = st.columns([3, 2])
@@ -179,5 +181,7 @@ while True:
              st.info("🔄 Menunggu atau mencoba mengambil data terbaru dari sensor...")
              st.spinner("Memuat data...")
 
-    time.sleep(15) # Refresh setiap 15 detik
+    # Tunggu 15 detik sebelum refresh
+    # Kurangi waktu tunggu saat debugging agar lebih cepat terlihat
+    time.sleep(10) # << Ubah ke 10 detik untuk debugging
 
