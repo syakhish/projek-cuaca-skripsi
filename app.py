@@ -18,17 +18,16 @@ API_URL = "http://syakhish.pythonanywhere.com/get_data"
 # ------------------------------------
 
 # ----------------- JUDUL APLIKASI -----------------
-st.title("🌦️ Dasbor Monitoring Cuaca Real-Time (DEBUG v2)") # Tambahkan v2 di judul
+st.title("🌦️ Dasbor Monitoring Cuaca Real-Time")
 st.markdown("---")
 
-# ----------------- FUNGSI BACA DATA DARI API (TANPA CACHE, HEADER NO-CACHE) -----------------
+# ----------------- FUNGSI BACA DATA DARI API (TANPA CACHE) -----------------
 # @st.cache_data(ttl=15) # <<< CACHE MASIH DINONAKTIFKAN
 def baca_data_dari_api():
-    """Mengambil data JSON dari API, mengonversi timestamp ke WIB, dengan header no-cache."""
+    """Mengambil data JSON dari API, mengonversi timestamp ke WIB."""
     try:
-        # Tambahkan header untuk mencoba mencegah cache di sisi client/proxy
-        headers = {'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0'}
-        response = requests.get(API_URL, timeout=15, headers=headers) # Tambahkan headers
+        headers = {'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Expires': '0'}
+        response = requests.get(API_URL, timeout=15, headers=headers)
         response.raise_for_status()
         data = response.json()
 
@@ -51,13 +50,10 @@ def baca_data_dari_api():
         return df
     except Exception as e:
         st.error(f"Error di baca_data_dari_api: {e}", icon="🚨")
-        # import traceback # Aktifkan jika perlu traceback detail
-        # st.code(traceback.format_exc())
         return None
 
 # --- FUNGSI tentukan_status_cuaca() TETAP SAMA ---
 def tentukan_status_cuaca(data):
-    # ... (kode fungsi ini tidak perlu diubah) ...
     imcs = data.get('imcs', 0.0); cahaya = data.get('cahaya', 4095); kelembapan = data.get('kelembapan', 0.0)
     AMBANG_CERAH = 800; AMBANG_BERAWAN = 2000; AMBANG_MENDUNG = 3000; AMBANG_MALAM = 3800
     try: cahaya = int(cahaya); imcs = float(imcs); kelembapan = float(kelembapan)
@@ -84,42 +80,48 @@ while True:
             status_text, status_emoji = tentukan_status_cuaca(data_terkini)
             waktu_update_str = "N/A"
             final_timestamp_object_wib = None
-            raw_wib_string = "N/A" # Untuk menampilkan objek mentah
 
             if 'timestamp' in data_terkini and pd.notnull(data_terkini['timestamp']):
                  try:
                       final_timestamp_object_wib = data_terkini['timestamp']
-                      # Simpan representasi string dari objek mentah
-                      raw_wib_string = str(final_timestamp_object_wib)
-                      # Format waktu final yang sudah WIB
                       waktu_update_str = final_timestamp_object_wib.strftime('%d %b %Y, %H:%M:%S')
                  except AttributeError as e:
                       waktu_update_str = "Error Format"
-                      raw_wib_string = f"Error: {e}"
 
             col_info, col_status = st.columns([3, 2])
             with col_info:
                 st.subheader(f"📍 Data Sensor Terkini")
-                # --- TAMPILKAN KEDUANYA UNTUK PERBANDINGAN ---
-                st.caption(f"Hasil strftime: {waktu_update_str} WIB")
-                st.caption(f"Objek Mentah WIB: {raw_wib_string}") # Tampilkan objek mentah
-                # ----------------------------------------------
+                st.caption(f"(Diperbarui pada: {waktu_update_str} WIB)")
             with col_status:
                  st.subheader(f"Kesimpulan Cuaca:")
                  st.markdown(f"<h2 style='text-align: left;'>{status_emoji} {status_text}</h2>", unsafe_allow_html=True)
 
-            # ... (sisa kode metrik, grafik, tabel tetap sama) ...
-            st.markdown("---") # Metrik dst
+            st.markdown("---")
+            # --- METRIK DETAIL ---
             k1, k2, k3, k4, k5 = st.columns(5); delta_suhu = df['suhu'].iloc[-1] - df['suhu'].iloc[-2] if len(df) > 1 else 0; delta_kelembapan = df['kelembapan'].iloc[-1] - df['kelembapan'].iloc[-2] if len(df) > 1 else 0
             k1.metric(label="🌡️ Suhu (°C)", value=f"{data_terkini.get('suhu', 0):.1f}", delta=f"{delta_suhu:.1f}"); k2.metric(label="💧 Kelembapan (%)", value=f"{data_terkini.get('kelembapan', 0):.1f}", delta=f"{delta_kelembapan:.1f}"); k3.metric(label="🌀 Tekanan (hPa)", value=f"{data_terkini.get('tekanan', 0):.1f}"); k4.metric(label="☀️ Cahaya (Analog)", value=f"{data_terkini.get('cahaya', 0):.0f}", help="Nilai 0-4095. Semakin KECIL = semakin TERANG"); k5.metric(label="☔️ IMCS", value=f"{data_terkini.get('imcs', 0):.2f}", help="Indeks di atas 1.0 menunjukkan peluang hujan tinggi")
-            st.markdown("---") # Grafik
+            st.markdown("---")
+
+            # --- GRAFIK HISTORIS (LINE CHART DENGAN PERBAIKAN TRY-EXCEPT FINAL) ---
             st.subheader("📈 Grafik Historis Data Sensor")
             if 'timestamp' in df.columns:
-                try: df_grafik = df.set_index('timestamp'); kolom_grafik = ['suhu', 'kelembapan', 'tekanan']; kolom_valid = [kol for kol in kolom_grafik if kol in df_grafik.columns];
-                if kolom_valid: st.line_chart(df_grafik[kolom_valid])
-                else: st.warning("Kolom data grafik tidak ditemukan.")
-                except Exception as e: st.error(f"Gagal membuat grafik: {e}")
-            else: st.warning("Kolom 'timestamp' tidak ditemukan.")
+                # --- BLOK TRY BARU YANG BENAR ---
+                try:
+                    df_grafik = df.set_index('timestamp')
+                    kolom_grafik = ['suhu', 'kelembapan', 'tekanan']
+                    kolom_valid = [kol for kol in kolom_grafik if kol in df_grafik.columns]
+                    if kolom_valid:
+                        st.line_chart(df_grafik[kolom_valid])
+                    else:
+                        st.warning("Kolom data ('suhu', 'kelembapan', 'tekanan') tidak ditemukan.")
+                # --- BLOK EXCEPT YANG SEHARUSNYA ADA ---
+                except Exception as e:
+                    st.error(f"Gagal membuat grafik: {e}")
+                # -------------------------------------
+            else:
+                 st.warning("Kolom 'timestamp' tidak ditemukan untuk membuat grafik.")
+
+            # --- DATA MENTAH (DALAM EXPANDER) ---
             with st.expander("Lihat Data Lengkap (Hingga 100 Data Terakhir)"):
                  if 'timestamp' in df.columns:
                      try: st.dataframe(df.sort_values(by='timestamp', ascending=False).set_index('timestamp'))
