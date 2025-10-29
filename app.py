@@ -18,40 +18,35 @@ API_URL = "http://syakhish.pythonanywhere.com/get_data"
 # ------------------------------------
 
 # ----------------- JUDUL APLIKASI -----------------
-st.title("🌦️ Dasbor Monitoring Cuaca Real-Time")
+st.title("🌦️ Dasbor Monitoring Cuaca Real-Time (DEBUG v2)") # Tambahkan v2 di judul
 st.markdown("---")
 
-# ----------------- FUNGSI BACA DATA DARI API (TANPA CACHE, DENGAN DEBUGGING) -----------------
+# ----------------- FUNGSI BACA DATA DARI API (TANPA CACHE, HEADER NO-CACHE) -----------------
 # @st.cache_data(ttl=15) # <<< CACHE MASIH DINONAKTIFKAN
 def baca_data_dari_api():
-    """Mengambil data JSON dari API, mengonversi timestamp ke WIB, dengan debugging."""
+    """Mengambil data JSON dari API, mengonversi timestamp ke WIB, dengan header no-cache."""
     try:
-        # st.write(f"DEBUG: Mengambil data dari {API_URL}...")
-        response = requests.get(API_URL, timeout=15)
+        # Tambahkan header untuk mencoba mencegah cache di sisi client/proxy
+        headers = {'Cache-Control': 'no-cache, no-store, must-revalidate', 'Pragma': 'no-cache', 'Expires': '0'}
+        response = requests.get(API_URL, timeout=15, headers=headers) # Tambahkan headers
         response.raise_for_status()
         data = response.json()
 
         if not data or not isinstance(data, list):
-             # st.warning("DEBUG: Data JSON dari API kosong...")
              return None
 
-        # st.write(f"DEBUG: Data JSON mentah terakhir:", data[-1])
         df = pd.DataFrame(data)
 
         # --- VALIDASI DAN KONVERSI TIMESTAMP (EKSPLISIT) ---
         if 'timestamp' not in df.columns: return None
-        # st.write(f"DEBUG: TS Mentah:", df['timestamp'].iloc[-1])
         df['timestamp_numeric'] = pd.to_numeric(df['timestamp'], errors='coerce')
         df.dropna(subset=['timestamp_numeric'], inplace=True)
         if df.empty: return None
-        # st.write(f"DEBUG: TS Numerik:", df['timestamp_numeric'].iloc[-1])
         df['timestamp_utc'] = pd.to_datetime(df['timestamp_numeric'], unit='s', utc=True, errors='coerce')
         df.dropna(subset=['timestamp_utc'], inplace=True)
         if df.empty: return None
-        # st.write(f"DEBUG: TS UTC:", df['timestamp_utc'].iloc[-1])
         zona_wib = pytz.timezone('Asia/Jakarta')
-        df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib)
-        # st.write(f"DEBUG: TS WIB Final:", df['timestamp'].iloc[-1])
+        df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib) # Konversi ke WIB
         # -------------------------------------------------------------
         return df
     except Exception as e:
@@ -62,6 +57,7 @@ def baca_data_dari_api():
 
 # --- FUNGSI tentukan_status_cuaca() TETAP SAMA ---
 def tentukan_status_cuaca(data):
+    # ... (kode fungsi ini tidak perlu diubah) ...
     imcs = data.get('imcs', 0.0); cahaya = data.get('cahaya', 4095); kelembapan = data.get('kelembapan', 0.0)
     AMBANG_CERAH = 800; AMBANG_BERAWAN = 2000; AMBANG_MENDUNG = 3000; AMBANG_MALAM = 3800
     try: cahaya = int(cahaya); imcs = float(imcs); kelembapan = float(kelembapan)
@@ -79,15 +75,6 @@ placeholder = st.empty()
 while True:
     st.cache_data.clear() # Hapus cache setiap iterasi
 
-    # --- DEBUGGING WAKTU SERVER (OPSIONAL, BISA DIHAPUS NANTI) ---
-    # try:
-    #     now_server_utc = datetime.utcnow().replace(tzinfo=pytz.utc)
-    #     zona_wib_server = pytz.timezone('Asia/Jakarta')
-    #     now_server_wib = now_server_utc.astimezone(zona_wib_server)
-    #     st.write(f"DEBUG SERVER TIME (WIB):", now_server_wib.strftime('%Y-%m-%d %H:%M:%S %Z%z'))
-    # except Exception as e: st.write(f"DEBUG SERVER TIME: Gagal - {e}")
-    # -----------------------------------------
-
     df = baca_data_dari_api() # Panggil fungsi baca data (TANPA CACHE!)
 
     if df is not None and not df.empty:
@@ -97,53 +84,42 @@ while True:
             status_text, status_emoji = tentukan_status_cuaca(data_terkini)
             waktu_update_str = "N/A"
             final_timestamp_object_wib = None
+            raw_wib_string = "N/A" # Untuk menampilkan objek mentah
 
             if 'timestamp' in data_terkini and pd.notnull(data_terkini['timestamp']):
                  try:
                       final_timestamp_object_wib = data_terkini['timestamp']
+                      # Simpan representasi string dari objek mentah
+                      raw_wib_string = str(final_timestamp_object_wib)
+                      # Format waktu final yang sudah WIB
                       waktu_update_str = final_timestamp_object_wib.strftime('%d %b %Y, %H:%M:%S')
                  except AttributeError as e:
                       waktu_update_str = "Error Format"
-
-            # --- DEBUGGING TAMPILAN WAKTU (OPSIONAL, BISA DIHAPUS NANTI) ---
-            # st.write(f"DEBUG Tampil: Objek Waktu Final (WIB):", final_timestamp_object_wib)
-            # st.write(f"DEBUG Tampil: String Waktu Final:", waktu_update_str)
-            # -------------------------------------------------------------
+                      raw_wib_string = f"Error: {e}"
 
             col_info, col_status = st.columns([3, 2])
             with col_info:
                 st.subheader(f"📍 Data Sensor Terkini")
-                st.caption(f"(Diperbarui pada: {waktu_update_str} WIB)")
+                # --- TAMPILKAN KEDUANYA UNTUK PERBANDINGAN ---
+                st.caption(f"Hasil strftime: {waktu_update_str} WIB")
+                st.caption(f"Objek Mentah WIB: {raw_wib_string}") # Tampilkan objek mentah
+                # ----------------------------------------------
             with col_status:
                  st.subheader(f"Kesimpulan Cuaca:")
                  st.markdown(f"<h2 style='text-align: left;'>{status_emoji} {status_text}</h2>", unsafe_allow_html=True)
 
-            st.markdown("---")
-            # --- METRIK DETAIL ---
+            # ... (sisa kode metrik, grafik, tabel tetap sama) ...
+            st.markdown("---") # Metrik dst
             k1, k2, k3, k4, k5 = st.columns(5); delta_suhu = df['suhu'].iloc[-1] - df['suhu'].iloc[-2] if len(df) > 1 else 0; delta_kelembapan = df['kelembapan'].iloc[-1] - df['kelembapan'].iloc[-2] if len(df) > 1 else 0
             k1.metric(label="🌡️ Suhu (°C)", value=f"{data_terkini.get('suhu', 0):.1f}", delta=f"{delta_suhu:.1f}"); k2.metric(label="💧 Kelembapan (%)", value=f"{data_terkini.get('kelembapan', 0):.1f}", delta=f"{delta_kelembapan:.1f}"); k3.metric(label="🌀 Tekanan (hPa)", value=f"{data_terkini.get('tekanan', 0):.1f}"); k4.metric(label="☀️ Cahaya (Analog)", value=f"{data_terkini.get('cahaya', 0):.0f}", help="Nilai 0-4095. Semakin KECIL = semakin TERANG"); k5.metric(label="☔️ IMCS", value=f"{data_terkini.get('imcs', 0):.2f}", help="Indeks di atas 1.0 menunjukkan peluang hujan tinggi")
-            st.markdown("---")
-
-            # --- GRAFIK HISTORIS (LINE CHART DENGAN PERBAIKAN TRY-EXCEPT) ---
+            st.markdown("---") # Grafik
             st.subheader("📈 Grafik Historis Data Sensor")
             if 'timestamp' in df.columns:
-                # --- BLOK TRY BARU ---
-                try:
-                    df_grafik = df.set_index('timestamp')
-                    kolom_grafik = ['suhu', 'kelembapan', 'tekanan']
-                    kolom_valid = [kol for kol in kolom_grafik if kol in df_grafik.columns]
-                    if kolom_valid:
-                        st.line_chart(df_grafik[kolom_valid])
-                    else:
-                        st.warning("Kolom data ('suhu', 'kelembapan', 'tekanan') tidak ditemukan.")
-                # --- BLOK EXCEPT YANG HILANG DITAMBAHKAN ---
-                except Exception as e:
-                    st.error(f"Gagal membuat grafik: {e}")
-                # -------------------------------------------
-            else:
-                 st.warning("Kolom 'timestamp' tidak ditemukan untuk membuat grafik.")
-
-            # --- DATA MENTAH (DALAM EXPANDER) ---
+                try: df_grafik = df.set_index('timestamp'); kolom_grafik = ['suhu', 'kelembapan', 'tekanan']; kolom_valid = [kol for kol in kolom_grafik if kol in df_grafik.columns];
+                if kolom_valid: st.line_chart(df_grafik[kolom_valid])
+                else: st.warning("Kolom data grafik tidak ditemukan.")
+                except Exception as e: st.error(f"Gagal membuat grafik: {e}")
+            else: st.warning("Kolom 'timestamp' tidak ditemukan.")
             with st.expander("Lihat Data Lengkap (Hingga 100 Data Terakhir)"):
                  if 'timestamp' in df.columns:
                      try: st.dataframe(df.sort_values(by='timestamp', ascending=False).set_index('timestamp'))
