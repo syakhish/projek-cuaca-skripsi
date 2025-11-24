@@ -170,11 +170,11 @@ while True:
                 st.warning("Kolom timestamp tidak ditemukan.")
 
             # --- TABEL DATA ---
-            with st.expander("Lihat Data Lengkap (100 Terakhir)"):
+            with st.expander("Lihat Data Lengkap (1000 Terakhir)"):
                 if 'timestamp' in df.columns:
                     st.dataframe(df.sort_values(by='timestamp', ascending=False).set_index('timestamp'))
                 else:
-                    st.dataframe(df.tail(100))
+                    st.dataframe(df.tail(1000))
 
     else:
         with placeholder.container():
@@ -182,3 +182,4 @@ while True:
             st.spinner("Sedang memuat...")
 
     time.sleep(10)
+
