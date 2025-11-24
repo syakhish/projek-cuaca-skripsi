@@ -172,7 +172,7 @@ while True:
             # --- TABEL DATA ---
             with st.expander("Lihat Data Lengkap (1000 Terakhir)"):
                 if 'timestamp' in df.columns:
-                    st.dataframe(df.sort_values(by='timestamp', ascending=False).set_index('timestamp'))
+                    st.dataframe(df.sort_values(by='timestamp', ascending=False).head(1000).set_index('timestamp'))
                 else:
                     st.dataframe(df.tail(1000))
 
@@ -182,4 +182,5 @@ while True:
             st.spinner("Sedang memuat...")
 
     time.sleep(10)
+
 
