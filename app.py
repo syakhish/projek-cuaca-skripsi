@@ -54,8 +54,7 @@ def baca_data_dari_api():
         st.error(f"Error membaca data: {e}")
         return None
 
-# ----------------- FUNGSI STATUS CUACA (LOGIKA BARU) -----------------
-# Ini adalah logika yang Anda buat berdasarkan masukan dosen
+# ----------------- FUNGSI STATUS CUACA (LOGIKA BARU DARI DOSEN) -----------------
 def tentukan_status_cuaca(data):
     # Ambil semua data
     imcs = data.get('imcs', 0.0)
@@ -70,8 +69,7 @@ def tentukan_status_cuaca(data):
     BATAS_BERAWAN = 2500     
     
     # Sensor Hujan (YL-83) - INI RUMUSNYA
-    BATAS_HUJAN_RINGAN = 3800  # Di bawah ini mulai gerimis
-    BATAS_HUJAN_DERAS = 2500   # Di bawah ini sudah deras
+    # Semakin kecil nilai = Semakin deras
     
     try: 
         cahaya = int(cahaya); imcs = float(imcs); 
@@ -81,10 +79,15 @@ def tentukan_status_cuaca(data):
     # --- LOGIKA UTAMA ---
     
     # 1. Prioritas Tertinggi: CEK FISIK AIR HUJAN (YL-83)
-    if hujan < BATAS_HUJAN_DERAS:
+    # Logika detail sesuai permintaan dosen:
+    if hujan < 1500:
+        return "BADAI / HUJAN SANGAT DERAS", "⛈️"
+    elif hujan < 2500:
         return "Hujan Deras", "🌧️"
-    elif hujan < BATAS_HUJAN_RINGAN:
-        return "Hujan Ringan / Gerimis", "🌦️"
+    elif hujan < 3200:
+        return "Hujan Sedang", "🌧️"
+    elif hujan < 3900: # Sangat sensitif (tetesan air/gerimis)
+        return "Gerimis / Rintik Hujan", "🌦️"
 
     # 2. Cek Malam (Jika tidak hujan)
     if cahaya < BATAS_MALAM: 
@@ -123,8 +126,8 @@ while True:
                  try: waktu_str = data_terkini['timestamp'].to_pydatetime().strftime('%d %b %Y, %H:%M:%S')
                  except: pass
 
-            # --- ALERT SISTEM ---
-            if "Hujan" in status_text:
+            # --- ALERT SISTEM (Notifikasi jika Hujan) ---
+            if "Hujan" in status_text or "BADAI" in status_text:
                 st.error(f"⚠️ PERINGATAN: Sedang terjadi {status_text}! Harap waspada.", icon="🌧️")
                 st.toast(f"Terdeteksi: {status_text}!", icon="☔")
             elif "Mendung" in status_text:
@@ -161,7 +164,7 @@ while True:
                     df_grafik = df.set_index('timestamp')
                     col_grafik1, col_grafik2 = st.columns(2)
                     
-                    # Grafik Lingkungan
+                    # Grafik Lingkungan (Kiri)
                     with col_grafik1:
                         st.markdown("**🌡️ Lingkungan**")
                         cols_env = ['suhu', 'kelembapan', 'tekanan']
@@ -169,10 +172,10 @@ while True:
                         if valid_cols: st.line_chart(df_grafik[valid_cols])
                         else: st.warning("Data lingkungan tidak ada.")
 
-                    # Grafik Cahaya & Hujan
+                    # Grafik Cahaya & Hujan (Kanan)
                     with col_grafik2:
-                        st.markdown("**☀️ Cahaya & 🌧️ Hujan**")
-                        # Kita gabung Cahaya dan Hujan di grafik kanan agar efisien
+                        st.markdown("**☀️ Cahaya & 🌧️ Hujan (Area Chart)**")
+                        # Menggabungkan Cahaya dan Hujan di satu grafik agar korelasi terlihat
                         cols_light = ['cahaya', 'hujan']
                         valid_cols_light = [c for c in cols_light if c in df_grafik.columns]
                         if valid_cols_light:
