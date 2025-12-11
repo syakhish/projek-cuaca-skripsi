@@ -54,7 +54,7 @@ def baca_data_dari_api():
         st.error(f"Error membaca data: {e}")
         return None
 
-# ----------------- FUNGSI STATUS CUACA (LOGIKA BARU DARI DOSEN) -----------------
+# ----------------- FUNGSI STATUS CUACA  -----------------
 def tentukan_status_cuaca(data):
     # Ambil semua data
     imcs = data.get('imcs', 0.0)
