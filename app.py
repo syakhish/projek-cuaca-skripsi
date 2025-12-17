@@ -4,7 +4,7 @@ import requests
 import time
 from datetime import datetime, timedelta
 import pytz
-import xmltodict  # Pastikan library ini terinstall
+import xmltodict
 
 # ----------------- KONFIGURASI HALAMAN -----------------
 st.set_page_config(
@@ -13,10 +13,11 @@ st.set_page_config(
     layout="wide",
 )
 
-# --- KONFIGURASI API & LOKASI ---
+# --- KONFIGURASI API ---
 API_URL = "http://syakhish.pythonanywhere.com/get_data"
 URL_BMKG = "https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml"
-ID_KOTA_BMKG = "501262"  # ID Kota Malang
+# KITA CARI BERDASARKAN NAMA, BUKAN ID LAGI AGAR LEBIH AMAN
+NAMA_KOTA_YANG_DICARI = "Kota Malang" 
 
 # ----------------- FUNGSI BACA DATA SENSOR -----------------
 def baca_data_dari_api():
@@ -43,7 +44,7 @@ def baca_data_dari_api():
         st.error(f"Error Sensor: {e}")
         return None
 
-# ----------------- FUNGSI BACA DATA BMKG -----------------
+# ----------------- FUNGSI BACA DATA BMKG (AUTO SEARCH) -----------------
 @st.cache_data(ttl=3600)
 def ambil_data_bmkg():
     try:
@@ -52,15 +53,19 @@ def ambil_data_bmkg():
         areas = data_dict['data']['forecast']['area']
         
         target_area = None
+        
+        # 1. LOOPING UNTUK MENCARI KOTA MALANG
         if isinstance(areas, list):
             for area in areas:
-                if area['@id'] == ID_KOTA_BMKG:
+                # Cek deskripsi area (misal: "Kota Malang" atau "Kab. Malang")
+                if NAMA_KOTA_YANG_DICARI.lower() in area['@description'].lower():
                     target_area = area
                     break
         else:
-            if areas['@id'] == ID_KOTA_BMKG: target_area = areas
+            if NAMA_KOTA_YANG_DICARI.lower() in areas['@description'].lower(): 
+                target_area = areas
 
-        if not target_area: return None, "Lokasi Tidak Ditemukan"
+        if not target_area: return None, "Kota Tidak Ditemukan"
 
         nama_kota = target_area['@description']
         params = target_area['parameter']
@@ -128,7 +133,7 @@ while True:
             current = df_sensor.iloc[-1]
             status, icon = tentukan_status_cuaca(current)
             
-            # --- HEADER INFO ---
+            # --- HEADER ---
             c1, c2 = st.columns([2, 1])
             with c1:
                 st.subheader("📡 Status Sensor")
@@ -142,13 +147,13 @@ while True:
                 st.subheader(f"🏢 Data BMKG ({lokasi_bmkg})")
                 if df_bmkg is not None:
                     now = datetime.now(pytz.timezone('Asia/Jakarta'))
-                    # Cari data terdekat (nearest)
                     try:
                         idx = df_bmkg.index.get_indexer([now], method='nearest')[0]
                         bmkg_now = df_bmkg.iloc[idx]
                         st.success(f"🌡️ {bmkg_now['Suhu BMKG']}°C | 💧 {bmkg_now['Kelembapan BMKG']}%")
+                        st.caption(f"Prakiraan Jam: {bmkg_now.name.strftime('%H:%M')} WIB")
                     except:
-                        st.warning("Menunggu Sinkronisasi BMKG")
+                        st.warning("Sinkronisasi Waktu BMKG...")
                 else:
                     st.warning("BMKG Offline")
 
@@ -157,14 +162,12 @@ while True:
             # --- METRIC KOMPARASI ---
             k1, k2, k3, k4, k5 = st.columns(5)
             
-            # Sensor Values
             t_sens = current.get('suhu', 0)
             h_sens = current.get('kelembapan', 0)
             p_sens = current.get('tekanan', 0)
             l_sens = current.get('cahaya', 0)
             r_sens = current.get('hujan', 4095)
             
-            # BMKG Values
             t_bmkg = bmkg_now['Suhu BMKG'] if df_bmkg is not None and 'bmkg_now' in locals() else 0
             h_bmkg = bmkg_now['Kelembapan BMKG'] if df_bmkg is not None and 'bmkg_now' in locals() else 0
             
@@ -176,44 +179,47 @@ while True:
             
             st.markdown("---")
 
-            # --- GRAFIK (LAYOUT LAMA KEMBALI) ---
-            st.subheader("📈 Grafik Historis")
+            # --- GRAFIK CANGGIH (FILL GAP) ---
+            st.subheader("📈 Grafik Historis & Komparasi")
             
             col_grafik1, col_grafik2 = st.columns(2)
             
-            # Persiapan Data Grafik
             df_plot = df_sensor.set_index('timestamp')
             
-            # GRAFIK 1 (KIRI): LINGKUNGAN (Suhu, Lembab, Tekanan) + BMKG
             with col_grafik1:
-                st.markdown("**🌡️ Lingkungan (Suhu, Kelembapan, Tekanan)**")
+                st.markdown("**🌡️ Lingkungan + Garis Referensi BMKG**")
                 
-                # Kita gabungkan data Sensor dan BMKG agar muncul dalam satu grafik
                 cols_env = ['suhu', 'kelembapan', 'tekanan']
-                # Filter hanya kolom yang ada
-                cols_env_valid = [c for c in cols_env if c in df_plot.columns]
-                df_env = df_plot[cols_env_valid].copy()
+                valid_cols = [c for c in cols_env if c in df_plot.columns]
+                df_env = df_plot[valid_cols].copy()
                 
-                # Tambahkan garis BMKG jika ada (untuk perbandingan)
                 if df_bmkg is not None:
-                    # Gabungkan (Concatenate)
+                    # TEKNIK KHUSUS: GABUNG & FORWARD FILL
+                    # 1. Gabung data sensor dan BMKG
                     df_combined = pd.concat([df_env, df_bmkg[['Suhu BMKG', 'Kelembapan BMKG']]], axis=1)
-                    st.line_chart(df_combined)
+                    # 2. Urutkan berdasarkan waktu
+                    df_combined = df_combined.sort_index()
+                    # 3. Isi nilai BMKG yang kosong dengan nilai sebelumnya (biar jadi garis lurus)
+                    df_combined[['Suhu BMKG', 'Kelembapan BMKG']] = df_combined[['Suhu BMKG', 'Kelembapan BMKG']].ffill()
+                    # 4. Potong agar rentang waktu sama dengan data sensor (biar tidak zoom out terlalu jauh)
+                    start_time = df_plot.index.min()
+                    end_time = df_plot.index.max()
+                    df_final_chart = df_combined.loc[start_time:end_time]
+                    
+                    st.line_chart(df_final_chart)
                 else:
                     st.line_chart(df_env)
 
-            # GRAFIK 2 (KANAN): CAHAYA & HUJAN
             with col_grafik2:
                 st.markdown("**☀️ Cahaya & 🌧️ Hujan**")
                 cols_light = ['cahaya', 'hujan']
                 if set(cols_light).issubset(df_plot.columns):
                     st.area_chart(df_plot[cols_light])
                 else:
-                    st.warning("Data Cahaya/Hujan belum tersedia")
+                    st.warning("Menunggu data...")
 
-            # --- TABEL (FIX: TAMPILKAN 1000 DATA) ---
-            with st.expander("📂 Data Lengkap (Hingga 1000 Data Terakhir)"):
-                # Di sini saya ubah head(100) menjadi head(1000)
+            # --- TABEL ---
+            with st.expander("📂 Data Lengkap (1000 Data Terakhir)"):
                 st.dataframe(df_sensor.sort_values(by='timestamp', ascending=False).head(1000))
 
     else:
