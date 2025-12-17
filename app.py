@@ -17,7 +17,8 @@ st.set_page_config(
 API_URL = "http://syakhish.pythonanywhere.com/get_data"
 # URL XML BMKG Jawa Timur
 URL_BMKG = "https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml"
-KOTA_DICARI = "Kota Malang"
+# ID KOTA MALANG (Lebih stabil pakai ID daripada Nama)
+ID_KOTA_BMKG = "501262" 
 
 # ----------------- FUNGSI BACA SENSOR (ESP32) -----------------
 def baca_data_dari_api():
@@ -43,7 +44,7 @@ def baca_data_dari_api():
     except Exception as e:
         return None
 
-# ----------------- FUNGSI BACA BMKG (TABEL) -----------------
+# ----------------- FUNGSI BACA BMKG (FIXED) -----------------
 @st.cache_data(ttl=3600)
 def ambil_data_bmkg_tabel():
     try:
@@ -51,17 +52,26 @@ def ambil_data_bmkg_tabel():
         data_dict = xmltodict.parse(response.content)
         areas = data_dict['data']['forecast']['area']
         
-        # Cari Kota Malang
+        # 1. Cari Area Berdasarkan ID 501262 (Kota Malang)
         target_area = None
-        if isinstance(areas, list):
+        
+        # Handle jika areas bukan list (cuma 1 area di file)
+        if not isinstance(areas, list):
+            areas = [areas]
+            
+        for area in areas:
+            if area['@id'] == ID_KOTA_BMKG:
+                target_area = area
+                break
+        
+        # Fallback: Jika ID tidak ketemu, cari pakai Nama
+        if target_area is None:
             for area in areas:
-                if KOTA_DICARI.lower() in area['@description'].lower():
+                if "Kota Malang" in area['@description']:
                     target_area = area
                     break
-        else:
-            if KOTA_DICARI.lower() in areas['@description'].lower(): target_area = areas
 
-        if not target_area: return None, "Lokasi Tidak Ditemukan"
+        if not target_area: return None, "Lokasi Tidak Ditemukan di XML"
         
         params = target_area['parameter']
         
@@ -70,9 +80,14 @@ def ambil_data_bmkg_tabel():
 
         for p in params:
             param_id = p['@id']
-            # Ambil Suhu (t), Kelembapan (hu), Cuaca (weather)
             if param_id in ['t', 'hu', 'weather']:
-                for item in p['timerange']:
+                
+                # Handle jika timerange bukan list (cuma 1 waktu)
+                timeranges = p['timerange']
+                if not isinstance(timeranges, list):
+                    timeranges = [timeranges]
+
+                for item in timeranges:
                     # Waktu
                     dt_str = item['@datetime']
                     dt = datetime.strptime(dt_str, "%Y%m%d%H%M")
@@ -91,19 +106,32 @@ def ambil_data_bmkg_tabel():
                     if param_id == 'weather': 
                         # Translate kode cuaca sederhana
                         kode = val
-                        ket = "Berawan"
+                        ket = "Berawan" # Default
+                        # Mapping kode cuaca BMKG
                         if kode in ['0', '1', '2']: ket = "Cerah"
-                        elif kode in ['60', '61', '63']: ket = "Hujan"
+                        elif kode in ['3', '4']: ket = "Berawan"
+                        elif kode in ['5', '10', '45']: ket = "Kabut/Asap"
+                        elif kode in ['60', '61', '63', '80']: ket = "Hujan"
                         elif kode in ['95', '97']: ket = "Badai Petir"
                         data_waktu[dt]['Cuaca'] = ket
 
         # Ubah ke DataFrame
+        if not data_waktu: return None, "Format Data Kosong"
+
         list_data = list(data_waktu.values())
         df_bmkg = pd.DataFrame(list_data).sort_values('Waktu')
-        return df_bmkg, target_area['@description']
+        
+        # Format kolom Waktu agar enak dibaca (String)
+        df_bmkg['Jam (WIB)'] = df_bmkg['Waktu'].dt.strftime('%d-%m %H:%M')
+        # Pindahkan kolom Jam ke depan
+        cols = ['Jam (WIB)', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)']
+        # Filter kolom yang ada saja
+        cols_final = [c for c in cols if c in df_bmkg.columns]
+        
+        return df_bmkg[cols_final], target_area['@description']
 
     except Exception as e:
-        return None, f"Error: {e}"
+        return None, f"Error System: {str(e)}"
 
 # ----------------- LOGIKA STATUS SENSOR -----------------
 def tentukan_status_sensor(data):
@@ -148,7 +176,7 @@ while True:
 
             st.markdown("---")
 
-            # --- METRICS (HANYA SENSOR) ---
+            # --- METRICS (SENSOR ONLY) ---
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("🌡️ Suhu", f"{current.get('suhu', 0):.1f} °C")
             k2.metric("💧 Kelembapan", f"{current.get('kelembapan', 0):.1f} %")
@@ -158,13 +186,13 @@ while True:
 
             st.markdown("---")
 
-            # --- GRAFIK (FORMAT LAMA) ---
+            # --- GRAFIK SENSOR ---
             st.subheader("📈 Grafik Data Sensor")
             g1, g2 = st.columns(2)
             
             df_plot = df_sensor.set_index('timestamp')
 
-            # Grafik 1: Lingkungan (Suhu, Lembab, Tekanan)
+            # Grafik 1: Lingkungan
             with g1:
                 st.markdown("**Suhu, Kelembapan, & Tekanan**")
                 cols_env = ['suhu', 'kelembapan', 'tekanan']
@@ -180,7 +208,7 @@ while True:
 
             st.markdown("---")
 
-            # --- TABEL DATA (SENSOR & BMKG) ---
+            # --- TABEL DATA ---
             tab1, tab2 = st.tabs(["📂 Data Sensor (History)", "🏢 Data Prakiraan BMKG"])
             
             with tab1:
@@ -188,15 +216,13 @@ while True:
                 st.dataframe(df_sensor.sort_values(by='timestamp', ascending=False).head(1000))
             
             with tab2:
-                st.caption(f"Sumber: Data Terbuka BMKG ({lokasi_bmkg})")
                 if df_bmkg is not None:
-                    # Format tabel BMKG agar rapi
-                    st.dataframe(df_bmkg.style.format({
-                        "Suhu (°C)": "{:.1f}",
-                        "Kelembapan (%)": "{:.0f}"
-                    }))
+                    st.success(f"Lokasi: {lokasi_bmkg}")
+                    # Menampilkan tabel BMKG tanpa index angka
+                    st.dataframe(df_bmkg.reset_index(drop=True), use_container_width=True)
                 else:
-                    st.warning("Data BMKG tidak tersedia saat ini.")
+                    # Menampilkan Pesan Error Spesifik jika gagal
+                    st.error(f"Data BMKG tidak tersedia. Info Error: {lokasi_bmkg}")
 
     else:
         with placeholder.container():
