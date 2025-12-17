@@ -53,7 +53,7 @@ def baca_data_owm():
     try:
         r = requests.get(URL_OWM, timeout=10)
         data = r.json()
-        if str(data.get("cod")) != "200": return None, f"Error OWM: {data.get('message')}"
+        if str(data.get("cod")) != "200": return None, f"Error OWM: {data.get('message', 'Gagal')}"
         
         forecast_list = data.get('list', [])
         parsed_data = []
@@ -138,25 +138,13 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # --- FITUR BARU: KETERANGAN ALERT ---
     with st.expander("ℹ️ Keterangan Alert"):
         st.markdown("""
         **Sistem Peringatan Dini:**
-        
-        🔴 **BAHAYA**
-        - Kondisi: Badai / Hujan Lebat
-        - Sensor Hujan < 1500
-        
-        🟠 **PERINGATAN**
-        - Kondisi: Hujan Deras
-        - Sensor Hujan 1500 - 2500
-        
-        🟡 **WASPADA**
-        - Kondisi: Gerimis / Rintik
-        - Sensor Hujan 2500 - 3900
-        
-        🟢 **AMAN**
-        - Kondisi: Berawan / Cerah
+        🔴 **BAHAYA**: Hujan Lebat (<1500)
+        🟠 **PERINGATAN**: Hujan Deras (1500-2500)
+        🟡 **WASPADA**: Gerimis (2500-3900)
+        🟢 **AMAN**: Berawan/Cerah
         """)
 
     st.markdown("---")
@@ -188,7 +176,6 @@ while True:
                 c1, c2 = st.columns([1, 4])
                 with c1: st.markdown(f"# {ico}")
                 with c2: 
-                    # ALERT SYSTEM
                     if "BADAI" in stat or "LEBAT" in stat:
                         st.error(f"⚠️ BAHAYA: {stat}! Harap Waspada.")
                         st.toast(f"⚠️ PERINGATAN: {stat}", icon="⛈️")
@@ -263,36 +250,40 @@ while True:
 
                 st.subheader("1. Perbandingan Nilai Terkini")
                 
-                # --- HITUNG DELTA ---
-                t_s, t_a = sensor_now.get('suhu', 0), owm_now['Suhu (°C)']
-                h_s, h_a = sensor_now.get('kelembapan', 0), owm_now['Kelembapan (%)']
-                p_s, p_a = sensor_now.get('tekanan', 0), owm_now['Tekanan (hPa)']
+                # --- PERBAIKAN NAMA VARIABEL DI SINI ---
+                temp_sensor = sensor_now.get('suhu', 0)
+                hum_sensor = sensor_now.get('kelembapan', 0)
+                press_sensor = sensor_now.get('tekanan', 0)
 
-                delta_t = t_sensor - t_owm
-                delta_h = h_sensor - h_owm
-                delta_p = p_sensor - p_owm
+                temp_api = owm_now['Suhu (°C)']
+                hum_api = owm_now['Kelembapan (%)']
+                press_api = owm_now['Tekanan (hPa)']
+
+                delta_t = temp_sensor - temp_api
+                delta_h = hum_sensor - hum_api
+                delta_p = press_sensor - press_api
 
                 c1, c2, c3 = st.columns(3)
                 
                 c1.markdown("### 🌡️ Temperatur")
-                c1.metric("Sensor", f"{t_s:.1f} °C")
-                c1.metric("API OWM", f"{t_a:.1f} °C", f"{t_s - t_a:.1f} °C", delta_color="inverse")
+                c1.metric("Sensor", f"{temp_sensor:.1f} °C")
+                c1.metric("API OWM", f"{temp_api:.1f} °C", f"{delta_t:.1f} °C", delta_color="inverse")
                 
                 c2.markdown("### 💧 Kelembapan")
-                c2.metric("Sensor", f"{h_s:.1f} %")
-                c2.metric("API OWM", f"{h_a:.1f} %", f"{h_s - h_a:.1f} %", delta_color="inverse")
+                c2.metric("Sensor", f"{hum_sensor:.1f} %")
+                c2.metric("API OWM", f"{hum_api:.1f} %", f"{delta_h:.1f} %", delta_color="inverse")
 
                 c3.markdown("### 🎈 Tekanan")
-                c3.metric("Sensor", f"{p_s:.1f} hPa")
-                c3.metric("API OWM", f"{p_a:.1f} hPa", f"{p_s - p_a:.1f} hPa", delta_color="inverse")
+                c3.metric("Sensor", f"{press_sensor:.1f} hPa")
+                c3.metric("API OWM", f"{press_api:.1f} hPa", f"{delta_p:.1f} hPa", delta_color="inverse")
 
                 st.divider()
                 st.subheader("2. Tabel Validasi")
                 comparison_data = {
                     "Parameter": ["Suhu (°C)", "Kelembapan (%)", "Tekanan (hPa)", "Status Cuaca"],
-                    "📡 Sensor ESP32": [f"{t_s:.1f}", f"{h_s:.1f}", f"{p_s:.1f}", get_status_sensor(sensor_now)[0]],
-                    "🌍 OpenWeatherMap": [f"{t_a:.1f}", f"{h_a:.1f}", f"{p_a:.1f}", owm_now['Cuaca']],
-                    "Selisih (Delta)": [f"{abs(t_s - t_a):.1f}", f"{abs(h_s - h_a):.1f}", f"{abs(p_s - p_a):.1f}", "-"]
+                    "📡 Sensor ESP32": [f"{temp_sensor:.1f}", f"{hum_sensor:.1f}", f"{press_sensor:.1f}", get_status_sensor(sensor_now)[0]],
+                    "🌍 OpenWeatherMap": [f"{temp_api:.1f}", f"{hum_api:.1f}", f"{press_api:.1f}", owm_now['Cuaca']],
+                    "Selisih (Delta)": [f"{abs(delta_t):.1f}", f"{abs(delta_h):.1f}", f"{abs(delta_p):.1f}", "-"]
                 }
                 st.table(pd.DataFrame(comparison_data))
                 
@@ -301,7 +292,7 @@ while True:
                 bar_data = pd.DataFrame({
                     "Sumber": ["Sensor", "API", "Sensor", "API", "Sensor", "API"],
                     "Tipe": ["Suhu", "Suhu", "Kelembapan", "Kelembapan", "Tekanan", "Tekanan"],
-                    "Nilai": [t_s, t_a, h_s, h_a, p_s, p_a]
+                    "Nilai": [temp_sensor, temp_api, hum_sensor, hum_api, press_sensor, press_api]
                 })
                 g1, g2, g3 = st.columns(3)
                 with g1: 
@@ -315,6 +306,6 @@ while True:
                     st.bar_chart(bar_data[bar_data["Tipe"] == "Tekanan"].set_index("Sumber")["Nilai"])
 
             else:
-                st.warning("Menunggu data lengkap...")
+                st.warning("Menunggu data lengkap dari Sensor dan API...")
 
     time.sleep(15)
