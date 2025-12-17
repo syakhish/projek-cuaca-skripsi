@@ -13,18 +13,13 @@ st.set_page_config(
 )
 
 # --- KONFIGURASI API ---
-# 1. API Sensor ESP32
 API_SENSOR = "http://syakhish.pythonanywhere.com/get_data"
-
-# 2. API OpenWeatherMap
 OWM_API_KEY = "29ff3120fea57ee5ee3298bef9c55b3f" 
 KOTA_OWM = "Malang"
 URL_OWM = f"https://api.openweathermap.org/data/2.5/forecast?q={KOTA_OWM}&appid={OWM_API_KEY}&units=metric&lang=id"
-
-# URL LOGO UNIVERSITAS BRAWIJAYA
 URL_LOGO_UB = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
 
-# ----------------- FUNGSI 1: BACA SENSOR (ESP32) -----------------
+# ----------------- FUNGSI BACA SENSOR -----------------
 def baca_data_sensor():
     try:
         headers = {'Cache-Control': 'no-cache'}
@@ -42,7 +37,7 @@ def baca_data_sensor():
         return df
     except: return None
 
-# ----------------- FUNGSI 2: BACA OPENWEATHERMAP -----------------
+# ----------------- FUNGSI BACA OWM -----------------
 @st.cache_data(ttl=1800) 
 def baca_data_owm():
     try:
@@ -80,7 +75,7 @@ def baca_data_owm():
     except Exception as e:
         return None, str(e)
 
-# ----------------- LOGIKA STATUS SENSOR -----------------
+# ----------------- LOGIKA STATUS -----------------
 def get_status_sensor(row):
     h = row.get('hujan', 4095)
     c = row.get('cahaya', 0)
@@ -95,15 +90,21 @@ def get_status_sensor(row):
 
 # ================== TAMPILAN DASHBOARD ==================
 
-# --- SIDEBAR NAVIGASI (DENGAN LOGO UB) ---
+# --- SIDEBAR (HEADER KHUSUS UB) ---
 with st.sidebar:
-    # 1. Menampilkan Logo (Tengah)
-    st.image(URL_LOGO_UB, width=150) 
+    # 1. Logo (Di Tengah)
+    col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
+    with col_logo2:
+        st.image(URL_LOGO_UB, use_column_width=True)
     
-    # 2. Judul Navigasi
+    # 2. Teks Universitas Brawijaya (Tebal & Tengah)
+    st.markdown("<h3 style='text-align: center;'>Universitas Brawijaya</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-size: small;'>Skripsi Teknik Komputer</p>", unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # 3. Navigasi
     st.title("🎛️ Navigasi")
-    
-    # 3. Menu Pilihan
     menu = st.radio("Pilih Menu:", [
         "📡 Monitor Sensor", 
         "🌍 Data API (OWM)", 
@@ -112,7 +113,7 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Info Lokasi API (Hanya muncul jika bukan menu sensor)
+    # Info Lokasi API
     df_owm, info_owm = baca_data_owm()
     if menu != "📡 Monitor Sensor":
         st.subheader("📍 Lokasi API")
@@ -121,9 +122,7 @@ with st.sidebar:
         else:
             st.warning("Menghubungkan...")
 
-    st.caption("© 2025 Skripsi Teknik Elektro")
-
-# --- MAIN LOOP ---
+# --- KONTEN UTAMA ---
 placeholder = st.empty()
 
 while True:
