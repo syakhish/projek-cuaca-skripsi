@@ -8,18 +8,27 @@ import xmltodict
 
 # ----------------- KONFIGURASI HALAMAN -----------------
 st.set_page_config(
-    page_title="Monitoring Cuaca Malang",
+    page_title="Monitoring Cuaca",
     page_icon="🍎",
     layout="wide",
 )
 
-# --- KONFIGURASI API ---
+# --- KONFIGURASI ---
 API_URL = "http://syakhish.pythonanywhere.com/get_data"
+# URL XML BMKG Jawa Timur
 URL_BMKG = "https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml"
-# KITA CARI BERDASARKAN NAMA, BUKAN ID LAGI AGAR LEBIH AMAN
-NAMA_KOTA_YANG_DICARI = "Kota Malang" 
+KOTA_DICARI = "Kota Malang"
 
-# ----------------- FUNGSI BACA DATA SENSOR -----------------
+# --- KAMUS KODE CUACA BMKG ---
+# Referensi: https://data.bmkg.go.id/prakiraan-cuaca/
+KODE_CUACA_BMKG = {
+    "0": "Cerah", "1": "Cerah Berawan", "2": "Cerah Berawan", "3": "Berawan", "4": "Berawan Tebal",
+    "5": "Udara Kabur", "10": "Asap", "45": "Kabut",
+    "60": "Hujan Ringan", "61": "Hujan Sedang", "63": "Hujan Lebat",
+    "80": "Hujan Lokal", "95": "Hujan Petir", "97": "Hujan Petir"
+}
+
+# ----------------- FUNGSI BACA SENSOR (ESP32) -----------------
 def baca_data_dari_api():
     try:
         headers = {'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Expires': '0'}
@@ -31,20 +40,20 @@ def baca_data_dari_api():
         df = pd.DataFrame(data)
         if 'timestamp' not in df.columns: return None
         
-        # Konversi Timestamp
+        # Bersihkan Data Timestamp
         df['timestamp_numeric'] = pd.to_numeric(df['timestamp'], errors='coerce')
         df.dropna(subset=['timestamp_numeric'], inplace=True)
         
+        # Convert ke WIB
         df['timestamp_utc'] = pd.to_datetime(df['timestamp_numeric'], unit='s', utc=True)
         zona_wib = pytz.timezone('Asia/Jakarta')
-        df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib) 
+        df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib)
         
         return df
     except Exception as e:
-        st.error(f"Error Sensor: {e}")
         return None
 
-# ----------------- FUNGSI BACA DATA BMKG (AUTO SEARCH) -----------------
+# ----------------- FUNGSI BACA BMKG (SUHU, LEMBAB, & CUACA) -----------------
 @st.cache_data(ttl=3600)
 def ambil_data_bmkg():
     try:
@@ -52,73 +61,87 @@ def ambil_data_bmkg():
         data_dict = xmltodict.parse(response.content)
         areas = data_dict['data']['forecast']['area']
         
+        # 1. Cari Kota Malang
         target_area = None
-        
-        # 1. LOOPING UNTUK MENCARI KOTA MALANG
         if isinstance(areas, list):
             for area in areas:
-                # Cek deskripsi area (misal: "Kota Malang" atau "Kab. Malang")
-                if NAMA_KOTA_YANG_DICARI.lower() in area['@description'].lower():
+                if KOTA_DICARI.lower() in area['@description'].lower():
                     target_area = area
                     break
         else:
-            if NAMA_KOTA_YANG_DICARI.lower() in areas['@description'].lower(): 
-                target_area = areas
+            if KOTA_DICARI.lower() in areas['@description'].lower(): target_area = areas
 
-        if not target_area: return None, "Kota Tidak Ditemukan"
-
+        if not target_area: return None, "Lokasi Tidak Ditemukan"
+        
         nama_kota = target_area['@description']
         params = target_area['parameter']
         
-        temp_data = []
-        hum_data = []
-        
+        list_data = []
+
+        # 2. Ekstrak Parameter
+        # Kita butuh: Suhu (t), Kelembapan (hu), Cuaca (weather)
+        temp_dict = {}
+        hum_dict = {}
+        weather_dict = {}
+
         for p in params:
             if p['@id'] == 't': # Suhu
                 for t in p['timerange']:
-                    waktu = datetime.strptime(t['@datetime'], "%Y%m%d%H%M")
-                    waktu = pytz.utc.localize(waktu).astimezone(pytz.timezone('Asia/Jakarta'))
-                    val = float(t['value'][0]['#text'])
-                    temp_data.append({'timestamp': waktu, 'Suhu BMKG': val})
+                    dt = datetime.strptime(t['@datetime'], "%Y%m%d%H%M")
+                    dt = pytz.utc.localize(dt).astimezone(pytz.timezone('Asia/Jakarta'))
+                    temp_dict[dt] = float(t['value'][0]['#text'])
             
-            if p['@id'] == 'hu': # Kelembapan
+            if p['@id'] == 'hu': # Lembab
                 for h in p['timerange']:
-                    waktu = datetime.strptime(h['@datetime'], "%Y%m%d%H%M")
-                    waktu = pytz.utc.localize(waktu).astimezone(pytz.timezone('Asia/Jakarta'))
-                    val = float(h['value']['#text'])
-                    hum_data.append({'timestamp': waktu, 'Kelembapan BMKG': val})
+                    dt = datetime.strptime(h['@datetime'], "%Y%m%d%H%M")
+                    dt = pytz.utc.localize(dt).astimezone(pytz.timezone('Asia/Jakarta'))
+                    hum_dict[dt] = float(h['value']['#text'])
 
-        df_temp = pd.DataFrame(temp_data).set_index('timestamp')
-        df_hum = pd.DataFrame(hum_data).set_index('timestamp')
-        df_bmkg = df_temp.join(df_hum, how='outer')
+            if p['@id'] == 'weather': # KODE CUACA (Untuk info hujan)
+                for w in p['timerange']:
+                    dt = datetime.strptime(w['@datetime'], "%Y%m%d%H%M")
+                    dt = pytz.utc.localize(dt).astimezone(pytz.timezone('Asia/Jakarta'))
+                    code = w['value']['#text']
+                    # Translate Kode ke Teks (misal: "Hujan Ringan")
+                    text_cuaca = KODE_CUACA_BMKG.get(code, f"Code {code}")
+                    weather_dict[dt] = text_cuaca
+
+        # 3. Gabungkan jadi satu DataFrame Rapi
+        # Ambil semua kunci waktu unik
+        all_times = sorted(set(list(temp_dict.keys()) + list(hum_dict.keys()) + list(weather_dict.keys())))
+        
+        final_data = []
+        for t in all_times:
+            final_data.append({
+                'timestamp': t,
+                'Suhu BMKG': temp_dict.get(t, None),
+                'Kelembapan BMKG': hum_dict.get(t, None),
+                'Status BMKG': weather_dict.get(t, "Tidak Diketahui")
+            })
+            
+        df_bmkg = pd.DataFrame(final_data).set_index('timestamp')
         return df_bmkg, nama_kota
 
     except Exception as e:
-        return None, f"Error BMKG: {str(e)}"
+        return None, f"Error: {e}"
 
-# ----------------- STATUS CUACA -----------------
-def tentukan_status_cuaca(data):
-    imcs = data.get('imcs', 0.0)
+# ----------------- LOGIKA STATUS SENSOR -----------------
+def tentukan_status_sensor(data):
+    hujan = data.get('hujan', 4095) # Analog
     cahaya = data.get('cahaya', 0)
-    kelembapan = data.get('kelembapan', 0.0)
-    hujan = data.get('hujan', 4095)
     
-    BATAS_MALAM = 100        
-    BATAS_BERAWAN = 2500     
-    
-    if hujan < 1500: return "BADAI / LEBAT", "⛈️"
+    if hujan < 1500: return "BADAI / HUJAN DERAS", "⛈️"
     elif hujan < 2500: return "Hujan Deras", "🌧️"
+    elif hujan < 3200: return "Hujan Sedang", "🌧️"
     elif hujan < 3900: return "Gerimis", "🌦️"
     
-    if cahaya < BATAS_MALAM: return "Malam Hari", "🌃"
-    elif imcs > 0.95 and cahaya < BATAS_BERAWAN: return "Mendung", "☁️"
-    elif cahaya > BATAS_BERAWAN:
-        if kelembapan < 70: return "Cerah", "☀️"
-        else: return "Cerah Lembab", "🌤️"
-    else: return "Berawan", "☁️"
+    # Jika tidak hujan, cek cahaya
+    if cahaya < 100: return "Malam Hari", "🌃"
+    if cahaya > 2500: return "Cerah", "☀️"
+    return "Berawan/Mendung", "☁️"
 
-# ----------------- TAMPILAN DASHBOARD -----------------
-st.title("🍎 Monitoring Cuaca Kota Malang")
+# ----------------- UI UTAMA -----------------
+st.title("🍎 Monitoring Cuaca & Curah Hujan (Malang)")
 st.markdown("---")
 
 placeholder = st.empty()
@@ -126,105 +149,105 @@ placeholder = st.empty()
 while True:
     st.cache_data.clear()
     df_sensor = baca_data_dari_api()
-    df_bmkg, lokasi_bmkg = ambil_data_bmkg()
+    df_bmkg, lokasi = ambil_data_bmkg()
 
     if df_sensor is not None and not df_sensor.empty:
         with placeholder.container():
-            current = df_sensor.iloc[-1]
-            status, icon = tentukan_status_cuaca(current)
+            now = df_sensor.iloc[-1]
+            status_sensor, icon_sensor = tentukan_status_sensor(now)
             
-            # --- HEADER ---
-            c1, c2 = st.columns([2, 1])
-            with c1:
-                st.subheader("📡 Status Sensor")
-                if "Hujan" in status or "BADAI" in status:
-                    st.error(f"PERINGATAN: {status}!", icon="🌧️")
-                else:
-                    st.info(f"Kondisi: {status} | {current['timestamp'].strftime('%H:%M:%S')}")
-                st.markdown(f"<h1 style='font-size: 40px;'>{icon} {status}</h1>", unsafe_allow_html=True)
+            # --- BAGIAN 1: HEADER PERBANDINGAN STATUS ---
+            col1, col2 = st.columns(2)
             
-            with c2:
-                st.subheader(f"🏢 Data BMKG ({lokasi_bmkg})")
+            # KIRI: SENSOR
+            with col1:
+                st.subheader("📡 Status Sensor (Real-time)")
+                st.markdown(f"## {icon_sensor} {status_sensor}")
+                st.caption(f"Update: {now['timestamp'].strftime('%H:%M:%S WIB')}")
+                
+            # KANAN: BMKG
+            with col2:
+                st.subheader(f"🏢 Prakiraan BMKG ({lokasi})")
+                
+                status_bmkg_text = "Menunggu Sinkronisasi..."
+                temp_bmkg = 0
+                
                 if df_bmkg is not None:
-                    now = datetime.now(pytz.timezone('Asia/Jakarta'))
+                    # Ambil data BMKG terdekat jam sekarang
+                    waktu_skrg = datetime.now(pytz.timezone('Asia/Jakarta'))
                     try:
-                        idx = df_bmkg.index.get_indexer([now], method='nearest')[0]
-                        bmkg_now = df_bmkg.iloc[idx]
-                        st.success(f"🌡️ {bmkg_now['Suhu BMKG']}°C | 💧 {bmkg_now['Kelembapan BMKG']}%")
-                        st.caption(f"Prakiraan Jam: {bmkg_now.name.strftime('%H:%M')} WIB")
-                    except:
-                        st.warning("Sinkronisasi Waktu BMKG...")
-                else:
-                    st.warning("BMKG Offline")
+                        idx = df_bmkg.index.get_indexer([waktu_skrg], method='nearest')[0]
+                        row_bmkg = df_bmkg.iloc[idx]
+                        status_bmkg_text = row_bmkg['Status BMKG'] # Ini teks misal "Hujan Ringan"
+                        temp_bmkg = row_bmkg['Suhu BMKG']
+                        hum_bmkg = row_bmkg['Kelembapan BMKG']
+                    except: pass
+                
+                # Tampilkan Status Hujan BMKG
+                icon_bmkg = "☁️"
+                if "Hujan" in status_bmkg_text: icon_bmkg = "🌧️"
+                elif "Cerah" in status_bmkg_text: icon_bmkg = "☀️"
+                
+                st.markdown(f"## {icon_bmkg} {status_bmkg_text}")
+                st.caption("Sumber: DigitalForecast BMKG Jawa Timur")
 
             st.markdown("---")
 
-            # --- METRIC KOMPARASI ---
-            k1, k2, k3, k4, k5 = st.columns(5)
+            # --- BAGIAN 2: KOMPARASI METRIK ---
+            st.markdown("### ⚖️ Data Kuantitatif")
+            m1, m2, m3, m4 = st.columns(4)
             
-            t_sens = current.get('suhu', 0)
-            h_sens = current.get('kelembapan', 0)
-            p_sens = current.get('tekanan', 0)
-            l_sens = current.get('cahaya', 0)
-            r_sens = current.get('hujan', 4095)
+            # Suhu
+            t_sens = now.get('suhu', 0)
+            m1.metric("Suhu Sensor", f"{t_sens:.1f}°C")
+            m2.metric("Suhu BMKG", f"{temp_bmkg:.1f}°C", f"{t_sens - temp_bmkg:.1f}°C", delta_color="inverse")
             
-            t_bmkg = bmkg_now['Suhu BMKG'] if df_bmkg is not None and 'bmkg_now' in locals() else 0
-            h_bmkg = bmkg_now['Kelembapan BMKG'] if df_bmkg is not None and 'bmkg_now' in locals() else 0
-            
-            k1.metric("Suhu (°C)", f"{t_sens:.1f}", f"{t_sens - t_bmkg:.1f} vs BMKG", delta_color="inverse")
-            k2.metric("Kelembapan (%)", f"{h_sens:.1f}", f"{h_sens - h_bmkg:.1f} vs BMKG", delta_color="inverse")
-            k3.metric("Tekanan (hPa)", f"{p_sens:.1f}")
-            k4.metric("Cahaya", f"{l_sens}")
-            k5.metric("Hujan (ADC)", f"{r_sens}")
-            
+            # Hujan (Perbandingan Konsep)
+            hujan_val = now.get('hujan', 4095)
+            # Kita bandingkan Nilai Analog vs Status Teks
+            m3.metric("Sensor Hujan (Analog)", f"{hujan_val}", "Semakin kecil = Basah")
+            m4.metric("Status Hujan BMKG", f"{status_bmkg_text}")
+
             st.markdown("---")
 
-            # --- GRAFIK CANGGIH (FILL GAP) ---
-            st.subheader("📈 Grafik Historis & Komparasi")
+            # --- BAGIAN 3: GRAFIK (DIPERBAIKI AGAR MENYAMBUNG) ---
+            st.subheader("📈 Grafik Perbandingan")
             
-            col_grafik1, col_grafik2 = st.columns(2)
+            g1, g2 = st.columns(2)
             
+            # Siapkan Data Sensor (Index Waktu)
             df_plot = df_sensor.set_index('timestamp')
             
-            with col_grafik1:
-                st.markdown("**🌡️ Lingkungan + Garis Referensi BMKG**")
-                
-                cols_env = ['suhu', 'kelembapan', 'tekanan']
-                valid_cols = [c for c in cols_env if c in df_plot.columns]
-                df_env = df_plot[valid_cols].copy()
-                
+            with g1:
+                st.markdown("**🌡️ Suhu & Kelembapan**")
                 if df_bmkg is not None:
-                    # TEKNIK KHUSUS: GABUNG & FORWARD FILL
-                    # 1. Gabung data sensor dan BMKG
-                    df_combined = pd.concat([df_env, df_bmkg[['Suhu BMKG', 'Kelembapan BMKG']]], axis=1)
-                    # 2. Urutkan berdasarkan waktu
-                    df_combined = df_combined.sort_index()
-                    # 3. Isi nilai BMKG yang kosong dengan nilai sebelumnya (biar jadi garis lurus)
-                    df_combined[['Suhu BMKG', 'Kelembapan BMKG']] = df_combined[['Suhu BMKG', 'Kelembapan BMKG']].ffill()
-                    # 4. Potong agar rentang waktu sama dengan data sensor (biar tidak zoom out terlalu jauh)
-                    start_time = df_plot.index.min()
-                    end_time = df_plot.index.max()
-                    df_final_chart = df_combined.loc[start_time:end_time]
+                    # 1. Ambil kolom Suhu/Lembab Sensor
+                    df_chart = df_plot[['suhu', 'kelembapan']].copy()
                     
-                    st.line_chart(df_final_chart)
+                    # 2. Resample BMKG agar sesuai dengan index Sensor (Interpolasi)
+                    # Ini trik kuncinya: Reindex data BMKG ke index Sensor, lalu isi data kosong
+                    df_bmkg_reindexed = df_bmkg.reindex(df_chart.index, method='nearest', tolerance=timedelta(hours=3))
+                    
+                    # 3. Gabungkan
+                    df_chart['Suhu BMKG'] = df_bmkg_reindexed['Suhu BMKG']
+                    # df_chart['Kelembapan BMKG'] = df_bmkg_reindexed['Kelembapan BMKG'] (Opsional, biar grafik gak penuh)
+                    
+                    st.line_chart(df_chart[['suhu', 'Suhu BMKG']])
                 else:
-                    st.line_chart(df_env)
-
-            with col_grafik2:
-                st.markdown("**☀️ Cahaya & 🌧️ Hujan**")
-                cols_light = ['cahaya', 'hujan']
-                if set(cols_light).issubset(df_plot.columns):
-                    st.area_chart(df_plot[cols_light])
-                else:
-                    st.warning("Menunggu data...")
+                    st.line_chart(df_plot[['suhu']])
+                    
+            with g2:
+                st.markdown("**🌧️ Monitoring Hujan (Sensor)**")
+                # Area chart untuk nilai hujan analog
+                st.area_chart(df_plot[['hujan']])
+                st.caption("*Grafik BMKG untuk hujan tidak ditampilkan karena format datanya adalah Kategori (Teks), bukan Angka.*")
 
             # --- TABEL ---
-            with st.expander("📂 Data Lengkap (1000 Data Terakhir)"):
+            with st.expander("Lihat Data Tabel"):
                 st.dataframe(df_sensor.sort_values(by='timestamp', ascending=False).head(1000))
 
     else:
-        with placeholder.container():
-            st.warning("⏳ Menunggu data ESP32...")
-            st.spinner("Sedang memuat...")
-            
+        st.warning("Menunggu Data Sensor...")
+        time.sleep(2)
+        
     time.sleep(15)
