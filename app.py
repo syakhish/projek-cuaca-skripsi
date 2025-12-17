@@ -4,6 +4,7 @@ import requests
 import time
 from datetime import datetime
 import pytz
+import os  # Library untuk cek file lokal
 
 # ----------------- KONFIGURASI HALAMAN -----------------
 st.set_page_config(
@@ -12,12 +13,16 @@ st.set_page_config(
     layout="wide",
 )
 
+# --- KONFIGURASI GAMBAR LOGO ---
+# Ganti "UBLOGO.png" sesuai dengan nama file dan ekstensi gambar kamu (.jpg/.png)
+FILE_LOGO_LOKAL = "UBLOGO.png" 
+URL_LOGO_ONLINE = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
+
 # --- KONFIGURASI API ---
 API_SENSOR = "http://syakhish.pythonanywhere.com/get_data"
 OWM_API_KEY = "29ff3120fea57ee5ee3298bef9c55b3f" 
 KOTA_OWM = "Malang"
 URL_OWM = f"https://api.openweathermap.org/data/2.5/forecast?q={KOTA_OWM}&appid={OWM_API_KEY}&units=metric&lang=id"
-URL_LOGO_UB = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
 
 # ----------------- FUNGSI BACA SENSOR -----------------
 def baca_data_sensor():
@@ -75,7 +80,7 @@ def baca_data_owm():
     except Exception as e:
         return None, str(e)
 
-# ----------------- LOGIKA STATUS -----------------
+# ----------------- LOGIKA STATUS SENSOR -----------------
 def get_status_sensor(row):
     h = row.get('hujan', 4095)
     c = row.get('cahaya', 0)
@@ -92,10 +97,15 @@ def get_status_sensor(row):
 
 # --- SIDEBAR (HEADER KHUSUS UB) ---
 with st.sidebar:
-    # 1. Logo (Di Tengah)
+    # 1. Tampilkan Logo
+    # Cek apakah file lokal ada?
     col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
     with col_logo2:
-        st.image(URL_LOGO_UB, use_column_width=True)
+        if os.path.exists(FILE_LOGO_LOKAL):
+            st.image(FILE_LOGO_LOKAL, use_container_width=True)
+        else:
+            # Fallback ke online jika file lokal tidak ada
+            st.image(URL_LOGO_ONLINE, use_container_width=True)
     
     # 2. Teks Universitas Brawijaya (Tebal & Tengah)
     st.markdown("<h3 style='text-align: center;'>Universitas Brawijaya</h3>", unsafe_allow_html=True)
