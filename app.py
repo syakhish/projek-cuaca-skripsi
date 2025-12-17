@@ -142,9 +142,13 @@ while True:
                 st.subheader(f"🏢 Data BMKG ({lokasi_bmkg})")
                 if df_bmkg is not None:
                     now = datetime.now(pytz.timezone('Asia/Jakarta'))
-                    idx = df_bmkg.index.get_indexer([now], method='nearest')[0]
-                    bmkg_now = df_bmkg.iloc[idx]
-                    st.success(f"🌡️ {bmkg_now['Suhu BMKG']}°C | 💧 {bmkg_now['Kelembapan BMKG']}%")
+                    # Cari data terdekat (nearest)
+                    try:
+                        idx = df_bmkg.index.get_indexer([now], method='nearest')[0]
+                        bmkg_now = df_bmkg.iloc[idx]
+                        st.success(f"🌡️ {bmkg_now['Suhu BMKG']}°C | 💧 {bmkg_now['Kelembapan BMKG']}%")
+                    except:
+                        st.warning("Menunggu Sinkronisasi BMKG")
                 else:
                     st.warning("BMKG Offline")
 
@@ -161,8 +165,8 @@ while True:
             r_sens = current.get('hujan', 4095)
             
             # BMKG Values
-            t_bmkg = bmkg_now['Suhu BMKG'] if df_bmkg is not None else 0
-            h_bmkg = bmkg_now['Kelembapan BMKG'] if df_bmkg is not None else 0
+            t_bmkg = bmkg_now['Suhu BMKG'] if df_bmkg is not None and 'bmkg_now' in locals() else 0
+            h_bmkg = bmkg_now['Kelembapan BMKG'] if df_bmkg is not None and 'bmkg_now' in locals() else 0
             
             k1.metric("Suhu (°C)", f"{t_sens:.1f}", f"{t_sens - t_bmkg:.1f} vs BMKG", delta_color="inverse")
             k2.metric("Kelembapan (%)", f"{h_sens:.1f}", f"{h_sens - h_bmkg:.1f} vs BMKG", delta_color="inverse")
@@ -186,7 +190,9 @@ while True:
                 
                 # Kita gabungkan data Sensor dan BMKG agar muncul dalam satu grafik
                 cols_env = ['suhu', 'kelembapan', 'tekanan']
-                df_env = df_plot[cols_env].copy()
+                # Filter hanya kolom yang ada
+                cols_env_valid = [c for c in cols_env if c in df_plot.columns]
+                df_env = df_plot[cols_env_valid].copy()
                 
                 # Tambahkan garis BMKG jika ada (untuk perbandingan)
                 if df_bmkg is not None:
@@ -205,9 +211,10 @@ while True:
                 else:
                     st.warning("Data Cahaya/Hujan belum tersedia")
 
-            # --- TABEL ---
-            with st.expander("📂 Data Lengkap"):
-                st.dataframe(df_sensor.sort_values(by='timestamp', ascending=False).head(100))
+            # --- TABEL (FIX: TAMPILKAN 1000 DATA) ---
+            with st.expander("📂 Data Lengkap (Hingga 1000 Data Terakhir)"):
+                # Di sini saya ubah head(100) menjadi head(1000)
+                st.dataframe(df_sensor.sort_values(by='timestamp', ascending=False).head(1000))
 
     else:
         with placeholder.container():
