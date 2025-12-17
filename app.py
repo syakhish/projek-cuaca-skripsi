@@ -15,19 +15,13 @@ st.set_page_config(
 
 # --- KONFIGURASI API ---
 API_URL = "http://syakhish.pythonanywhere.com/get_data"
-# URL XML BMKG Jawa Timur
 URL_BMKG = "https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml"
 
-# ID KOTA MALANG
-ID_KOTA_BMKG = "501262" 
-
-# ----------------- FUNGSI BANTUAN (PENTING) -----------------
+# ----------------- FUNGSI BANTUAN ANTI-ERROR -----------------
 def ensure_list(item):
-    """Memastikan data selalu berupa list agar tidak error saat looping"""
-    if item is None:
-        return []
-    if isinstance(item, list):
-        return item
+    """Memaksa data menjadi list agar tidak crash"""
+    if item is None: return []
+    if isinstance(item, list): return item
     return [item]
 
 # ----------------- FUNGSI BACA SENSOR (ESP32) -----------------
@@ -35,14 +29,14 @@ def baca_data_dari_api():
     try:
         headers = {'Cache-Control': 'no-cache', 'Pragma': 'no-cache', 'Expires': '0'}
         response = requests.get(API_URL, timeout=15, headers=headers)
-        response.raise_for_status()
+        if response.status_code != 200: return None
+        
         data = response.json()
-
         if not data or not isinstance(data, list): return None
+        
         df = pd.DataFrame(data)
         if 'timestamp' not in df.columns: return None
         
-        # Konversi Timestamp
         df['timestamp_numeric'] = pd.to_numeric(df['timestamp'], errors='coerce')
         df.dropna(subset=['timestamp_numeric'], inplace=True)
         
@@ -51,110 +45,108 @@ def baca_data_dari_api():
         df['timestamp'] = df['timestamp_utc'].dt.tz_convert(zona_wib)
         
         return df
-    except Exception as e:
+    except:
         return None
 
-# ----------------- FUNGSI BACA BMKG (VERSI ANTI-CRASH) -----------------
+# ----------------- FUNGSI BACA BMKG (DIAGNOSTIK) -----------------
 @st.cache_data(ttl=3600)
 def ambil_data_bmkg_tabel():
+    debug_info = ""
     try:
-        response = requests.get(URL_BMKG, timeout=10)
-        # Parsing XML
-        data_dict = xmltodict.parse(response.content)
-        
-        # Navigasi aman ke node Area
-        forecast = data_dict.get('data', {}).get('forecast', {})
-        areas = ensure_list(forecast.get('area'))
-        
-        if not areas: return None, "Data XML Kosong"
+        # 1. Coba Download XML
+        try:
+            response = requests.get(URL_BMKG, timeout=15)
+            response.raise_for_status()
+        except Exception as e:
+            return None, f"Gagal Download XML: {str(e)}"
 
-        # 1. CARI LOKASI (Prioritas ID -> Prioritas Nama -> Ambil Pertama)
+        # 2. Parsing XML
+        try:
+            data_dict = xmltodict.parse(response.content)
+            forecast = data_dict.get('data', {}).get('forecast', {})
+            areas = ensure_list(forecast.get('area'))
+        except Exception as e:
+            return None, f"Gagal Parsing XML: {str(e)}"
+
+        if not areas: return None, "Data Area Kosong di XML"
+
+        # 3. Cari Kota "Malang" (Case Insensitive)
         target_area = None
+        daftar_kota_ditemukan = [] # Untuk debug
         
-        # Coba cari ID 501262
         for area in areas:
-            if area.get('@id') == ID_KOTA_BMKG:
-                target_area = area
-                break
-        
-        # Jika tidak ketemu, cari yang namanya mengandung "Malang"
-        if target_area is None:
-            for area in areas:
-                desc = area.get('@description', '').lower()
-                if "kota malang" in desc or "malang" in desc:
+            desc = area.get('@description', '')
+            daftar_kota_ditemukan.append(desc) # Simpan nama kota buat laporan jika gagal
+            
+            # Cek apakah ada kata "Malang" di deskripsi dan bukan kabupaten (opsional)
+            # Kita ambil yang pertama kali muncul kata "Malang"
+            if "Malang" in desc: 
+                # Prioritaskan Kota Malang daripada Kabupaten
+                if "Kota" in desc:
                     target_area = area
                     break
-        
-        if target_area is None: return None, "Kota Malang Tidak Ditemukan di XML"
+                # Jika belum nemu Kota, simpan Kabupaten dulu sebagai cadangan
+                if target_area is None:
+                    target_area = area
 
-        # 2. EKSTRAK PARAMETER
+        if target_area is None:
+            # Tampilkan 5 kota pertama yang ditemukan agar user tahu isinya apa
+            contoh_kota = ", ".join(daftar_kota_ditemukan[:5])
+            return None, f"Tidak ada 'Malang'. Kota yang ada: {contoh_kota}..."
+
+        # 4. Ekstrak Data
         params = ensure_list(target_area.get('parameter'))
         data_waktu = {}
 
         for p in params:
             param_id = p.get('@id')
-            
             if param_id in ['t', 'hu', 'weather']:
-                # Loop setiap rentang waktu
                 timeranges = ensure_list(p.get('timerange'))
-                
                 for item in timeranges:
-                    # Ambil Waktu
                     dt_str = item.get('@datetime')
-                    if not dt_str: continue
-                    
                     try:
                         dt = datetime.strptime(dt_str, "%Y%m%d%H%M")
                         dt = pytz.utc.localize(dt).astimezone(pytz.timezone('Asia/Jakarta'))
                     except: continue
 
-                    if dt not in data_waktu:
-                        data_waktu[dt] = {'Waktu': dt}
+                    if dt not in data_waktu: data_waktu[dt] = {'Waktu': dt}
                     
-                    # Ambil Nilai
-                    val_obj = item.get('value')
+                    val_raw = item.get('value')
                     val = "0"
+                    if isinstance(val_raw, list): val = val_raw[0].get('#text', '0')
+                    elif isinstance(val_raw, dict): val = val_raw.get('#text', '0')
+                    else: val = str(val_raw)
                     
-                    # Handle jika value ada unitnya atau list
-                    if isinstance(val_obj, list):
-                        val = val_obj[0].get('#text', '0')
-                    elif isinstance(val_obj, dict):
-                        val = val_obj.get('#text', '0')
-                    else:
-                        val = str(val_obj)
-
-                    # Masukkan ke dictionary
-                    if param_id == 't': 
-                        data_waktu[dt]['Suhu (°C)'] = float(val)
-                    if param_id == 'hu': 
-                        data_waktu[dt]['Kelembapan (%)'] = float(val)
+                    if param_id == 't': data_waktu[dt]['Suhu (°C)'] = float(val)
+                    if param_id == 'hu': data_waktu[dt]['Kelembapan (%)'] = float(val)
                     if param_id == 'weather':
+                        # Mapping Kode Cuaca
                         kode = val
-                        ket = "Berawan"
-                        if kode in ['0', '1', '2']: ket = "Cerah"
-                        elif kode in ['3', '4']: ket = "Berawan"
-                        elif kode in ['5', '10', '45']: ket = "Kabut"
-                        elif kode in ['60', '61', '63', '80']: ket = "Hujan"
-                        elif kode in ['95', '97']: ket = "Badai Petir"
-                        data_waktu[dt]['Cuaca'] = ket
+                        status = "Berawan"
+                        if kode in ['0', '1', '2']: status = "Cerah"
+                        elif kode in ['3', '4']: status = "Berawan"
+                        elif kode in ['5', '10', '45']: status = "Kabut"
+                        elif kode in ['60', '61', '63', '80']: status = "Hujan"
+                        elif kode in ['95', '97']: status = "Hujan Petir"
+                        data_waktu[dt]['Cuaca'] = status
 
-        # 3. CONVERT KE DATAFRAME
-        if not data_waktu: return None, "Format Data Parameter Salah"
+        if not data_waktu: return None, "Struktur Parameter XML Berubah"
 
+        # 5. Finalisasi DataFrame
         list_data = list(data_waktu.values())
         df_bmkg = pd.DataFrame(list_data).sort_values('Waktu')
         
-        # Format Tampilan Waktu (String)
+        # Format Jam
         df_bmkg['Jam (WIB)'] = df_bmkg['Waktu'].dt.strftime('%d-%m %H:%M')
         
-        # Urutan Kolom
+        # Susun Kolom
         cols = ['Jam (WIB)', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)']
         cols_final = [c for c in cols if c in df_bmkg.columns]
         
-        return df_bmkg[cols_final], target_area.get('@description', 'Unknown')
+        return df_bmkg[cols_final], target_area.get('@description')
 
     except Exception as e:
-        return None, f"Error System: {str(e)}"
+        return None, f"Unknown Error: {str(e)}"
 
 # ----------------- LOGIKA STATUS SENSOR -----------------
 def tentukan_status_sensor(data):
@@ -170,7 +162,7 @@ def tentukan_status_sensor(data):
     if cahaya > 2500: return "Cerah", "☀️"
     return "Berawan", "☁️"
 
-# ----------------- TAMPILAN UTAMA -----------------
+# ----------------- UI DASHBOARD -----------------
 st.title("🌦️ Monitoring Cuaca")
 st.markdown("---")
 
@@ -179,27 +171,25 @@ placeholder = st.empty()
 while True:
     st.cache_data.clear()
     df_sensor = baca_data_dari_api()
-    df_bmkg, lokasi_bmkg = ambil_data_bmkg_tabel()
+    df_bmkg, info_bmkg = ambil_data_bmkg_tabel()
 
     if df_sensor is not None and not df_sensor.empty:
         with placeholder.container():
             current = df_sensor.iloc[-1]
             status, icon = tentukan_status_sensor(current)
             
-            # --- HEADER STATUS ---
+            # HEADER
             st.subheader("Status Terkini")
-            col_head1, col_head2 = st.columns([1, 3])
-            with col_head1:
-                st.markdown(f"<h1 style='text-align: center; font-size: 80px;'>{icon}</h1>", unsafe_allow_html=True)
-            with col_head2:
+            c1, c2 = st.columns([1, 3])
+            with c1: st.markdown(f"<h1 style='text-align: center; font-size: 80px;'>{icon}</h1>", unsafe_allow_html=True)
+            with c2:
                 st.info(f"Kondisi: **{status}**")
-                st.caption(f"Terakhir update: {current['timestamp'].strftime('%d %b %Y, %H:%M:%S')} WIB")
-                if "Hujan" in status or "BADAI" in status:
-                    st.error("PERINGATAN: Sedang turun hujan!")
+                st.caption(f"Last Update: {current['timestamp'].strftime('%d %b %Y, %H:%M:%S')} WIB")
+                if "Hujan" in status or "BADAI" in status: st.error("PERINGATAN HUJAN!")
 
             st.markdown("---")
 
-            # --- METRICS (HANYA SENSOR) ---
+            # METRICS
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("🌡️ Suhu", f"{current.get('suhu', 0):.1f} °C")
             k2.metric("💧 Kelembapan", f"{current.get('kelembapan', 0):.1f} %")
@@ -209,48 +199,40 @@ while True:
 
             st.markdown("---")
 
-            # --- GRAFIK SENSOR ---
-            st.subheader("📈 Grafik Data Sensor")
+            # GRAFIK
+            st.subheader("📈 Grafik Sensor")
             g1, g2 = st.columns(2)
-            
             df_plot = df_sensor.set_index('timestamp')
-
-            # Grafik 1: Lingkungan
-            with g1:
-                st.markdown("**Suhu, Kelembapan, & Tekanan**")
-                cols_env = ['suhu', 'kelembapan', 'tekanan']
-                valid_cols = [c for c in cols_env if c in df_plot.columns]
-                st.line_chart(df_plot[valid_cols])
             
-            # Grafik 2: Cahaya & Hujan
+            with g1:
+                st.markdown("**Lingkungan**")
+                cols = ['suhu', 'kelembapan', 'tekanan']
+                valid = [c for c in cols if c in df_plot.columns]
+                st.line_chart(df_plot[valid])
             with g2:
-                st.markdown("**Intensitas Cahaya & Hujan**")
-                cols_light = ['cahaya', 'hujan']
-                if set(cols_light).issubset(df_plot.columns):
-                    st.area_chart(df_plot[cols_light])
+                st.markdown("**Cahaya & Hujan**")
+                cols = ['cahaya', 'hujan']
+                if set(cols).issubset(df_plot.columns): st.area_chart(df_plot[cols])
 
             st.markdown("---")
 
-            # --- TABEL DATA ---
-            tab1, tab2 = st.tabs(["📂 Data Sensor (History)", "🏢 Data Prakiraan BMKG"])
-            
+            # TABEL
+            tab1, tab2 = st.tabs(["📂 Data Sensor", "🏢 Data BMKG"])
             with tab1:
-                st.caption("Menampilkan 1000 data terakhir dari alat.")
                 st.dataframe(df_sensor.sort_values(by='timestamp', ascending=False).head(1000))
-            
             with tab2:
+                # LOGIKA DIAGNOSTIK
                 if df_bmkg is not None:
-                    st.success(f"Lokasi Data BMKG: {lokasi_bmkg}")
-                    # Tampilkan tabel dengan lebar penuh
+                    st.success(f"Berhasil Memuat Data: {info_bmkg}")
                     st.dataframe(df_bmkg, use_container_width=True, hide_index=True)
                 else:
-                    # Tampilkan error detail jika masih gagal
-                    st.error(f"Gagal memuat data BMKG. Pesan: {lokasi_bmkg}")
-                    st.markdown("[Klik disini untuk cek XML BMKG](https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml)")
+                    st.error("⚠️ Data BMKG Tidak Muncul")
+                    st.warning(f"Pesan Error Sistem: {info_bmkg}")
+                    st.info("Tips: Jika error 'Gagal Download', cek koneksi internet. Jika 'Kota Tidak Ditemukan', BMKG mungkin mengubah nama kota di XML.")
 
     else:
         with placeholder.container():
-            st.warning("Menunggu data masuk...")
-            st.spinner("Connecting to server...")
+            st.warning("Menunggu data ESP32...")
+            st.spinner("Connecting...")
             
     time.sleep(15)
