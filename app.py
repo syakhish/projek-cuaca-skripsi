@@ -14,15 +14,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- LOGIKA GAMBAR LOGO (JPG/PNG/ONLINE) ---
-# Cek file lokal dulu (Prioritas)
+# --- LOGIKA GAMBAR LOGO ---
 logo_path = None
 if os.path.exists("UBLOGO.png"):
     logo_path = "UBLOGO.png"
 elif os.path.exists("UBLOGO.jpg"):
     logo_path = "UBLOGO.jpg"
 else:
-    # Fallback ke Online jika file lokal tidak ada
     logo_path = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
 
 # --- KONFIGURASI API ---
@@ -68,10 +66,9 @@ def baca_data_owm():
             dt_utc = pytz.utc.localize(dt_obj)
             dt_wib = dt_utc.astimezone(pytz.timezone('Asia/Jakarta'))
             
-            # --- UPDATE: AMBIL TEKANAN (hPa) ---
             temp = item['main']['temp']
             hum = item['main']['humidity']
-            press = item['main']['pressure'] # Tambahan
+            press = item['main']['pressure'] # DATA TEKANAN
             desc = item['weather'][0]['description']
             
             parsed_data.append({
@@ -79,7 +76,7 @@ def baca_data_owm():
                 'Jam': dt_wib.strftime("%d-%m %H:%M"),
                 'Suhu (°C)': float(temp),
                 'Kelembapan (%)': float(hum),
-                'Tekanan (hPa)': float(press), # Simpan Tekanan
+                'Tekanan (hPa)': float(press),
                 'Cuaca': desc.title()
             })
             
@@ -105,37 +102,31 @@ def get_status_sensor(row):
 
 # ================== TAMPILAN DASHBOARD ==================
 
-# --- SIDEBAR NAVIGASI ---
+# --- SIDEBAR ---
 with st.sidebar:
-    # 1. Tampilkan Logo
     col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
     with col_logo2:
         st.image(logo_path, use_container_width=True)
     
-    # 2. Judul (Styling nanti ikut tema)
     st.markdown("<h3 style='text-align: center;'>Universitas Brawijaya</h3>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; font-size: small;'>Skripsi Teknik Komputer</p>", unsafe_allow_html=True)
-    
     st.markdown("---")
     
-    # 3. Navigasi
     st.title("🎛️ Navigasi")
     menu = st.radio("Pilih Menu:", [
         "📡 Monitor Sensor", 
         "🌍 Data API (OWM)", 
         "⚖️ Komparasi & Validasi"
     ])
-    
     st.markdown("---")
 
-    # 4. PENGATURAN TEMA & WARNA (LOGIKA CSS DI SINI)
+    # Pengaturan Tema
     st.subheader("⚙️ Tampilan")
     tema_pilihan = st.radio("Mode:", ["Light", "Dark"], horizontal=True)
 
     if tema_pilihan == "Dark":
         st.markdown("""
         <style>
-            /* --- MODE GELAP (DARK) --- */
             .stApp { background-color: #0E1117; color: #FFFFFF; }
             section[data-testid="stSidebar"] { background-color: #262730; color: #FFFFFF; }
             h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown { color: #FAFAFA !important; }
@@ -147,7 +138,6 @@ with st.sidebar:
     else:
         st.markdown("""
         <style>
-            /* --- MODE TERANG (LIGHT) --- */
             .stApp { background-color: #FFFFFF; color: #000000; }
             section[data-testid="stSidebar"] { background-color: #F0F2F6; color: #000000; }
             h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown { color: #31333F !important; }
@@ -158,7 +148,6 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Info Lokasi API
     df_owm, info_owm = baca_data_owm()
     if menu != "📡 Monitor Sensor":
         st.subheader("📍 Lokasi API")
@@ -188,9 +177,20 @@ while True:
                 c1, c2 = st.columns([1, 4])
                 with c1: st.markdown(f"# {ico}")
                 with c2: 
-                    st.info(f"Status: **{stat}**")
+                    # --- FITUR ALERT SYSTEM PINTAR ---
+                    if "BADAI" in stat or "LEBAT" in stat:
+                        st.error(f"⚠️ BAHAYA: TERDETEKSI {stat}! Harap Waspada.")
+                        st.toast(f"⚠️ PERINGATAN: {stat}", icon="⛈️")
+                    elif "DERAS" in stat:
+                        st.error(f"⚠️ PERINGATAN: Sedang terjadi {stat}.")
+                        st.toast(f"🌧️ Hujan Deras Terdeteksi!", icon="🌧️")
+                    elif "GERIMIS" in stat:
+                        st.warning(f"ℹ️ Info: Kondisi saat ini {stat}.")
+                        st.toast(f"☔ Mulai Turun Hujan (Gerimis)", icon="☔")
+                    else:
+                        st.success(f"Status: **{stat}** (Kondisi Aman)")
+                    
                     st.caption(f"Update: {now['timestamp'].strftime('%d %b %Y, %H:%M:%S')} WIB")
-                    if "Hujan" in stat or "BADAI" in stat: st.error("PERINGATAN HUJAN!")
                 
                 st.divider()
 
@@ -227,17 +227,14 @@ while True:
             
             if df_owm is not None:
                 now_owm = df_owm.iloc[0]
-                
-                # --- UPDATE: Tambah Kolom Tekanan ---
                 col_a, col_b, col_c, col_d = st.columns(4)
                 col_a.metric("Suhu (OWM)", f"{now_owm['Suhu (°C)']} °C")
                 col_b.metric("Kelembapan (OWM)", f"{now_owm['Kelembapan (%)']} %")
-                col_c.metric("Tekanan (OWM)", f"{now_owm['Tekanan (hPa)']} hPa") # Baru
+                col_c.metric("Tekanan (OWM)", f"{now_owm['Tekanan (hPa)']} hPa")
                 col_d.metric("Kondisi", f"{now_owm['Cuaca']}")
                 
                 st.divider()
                 st.subheader("Grafik Tren 5 Hari")
-                # Grafik Tekanan ikut ditampilkan
                 st.line_chart(df_owm.set_index('Jam')[['Suhu (°C)', 'Kelembapan (%)', 'Tekanan (hPa)']])
                 
                 st.subheader("Data Lengkap Forecast")
@@ -256,35 +253,32 @@ while True:
 
                 st.subheader("1. Perbandingan Nilai Terkini")
                 
-                # Data Sensor
+                # --- HITUNG DELTA ---
                 t_sensor = sensor_now.get('suhu', 0)
                 h_sensor = sensor_now.get('kelembapan', 0)
-                p_sensor = sensor_now.get('tekanan', 0) # Ambil tekanan sensor
+                p_sensor = sensor_now.get('tekanan', 0)
 
-                # Data API
                 t_owm = owm_now['Suhu (°C)']
                 h_owm = owm_now['Kelembapan (%)']
-                p_owm = owm_now['Tekanan (hPa)'] # Ambil tekanan API
+                p_owm = owm_now['Tekanan (hPa)']
 
-                # Hitung Delta
                 delta_t = t_sensor - t_owm
                 delta_h = h_sensor - h_owm
                 delta_p = p_sensor - p_owm
 
-                # --- UPDATE: KOLOM UNTUK TEKANAN ---
                 c1, c2, c3 = st.columns(3)
                 
                 c1.markdown("### 🌡️ Temperatur")
                 c1.metric("Sensor (Alat)", f"{t_sensor:.1f} °C")
-                c1.metric("API (OpenWeather)", f"{t_owm:.1f} °C", f"{delta_t:.1f} °C (Selisih)", delta_color="inverse")
+                c1.metric("API OWM", f"{t_owm:.1f} °C", f"{delta_t:.1f} °C (Selisih)", delta_color="inverse")
                 
                 c2.markdown("### 💧 Kelembapan")
                 c2.metric("Sensor (Alat)", f"{h_sensor:.1f} %")
-                c2.metric("API (OpenWeather)", f"{h_owm:.1f} %", f"{delta_h:.1f} % (Selisih)", delta_color="inverse")
+                c2.metric("API OWM", f"{h_owm:.1f} %", f"{delta_h:.1f} % (Selisih)", delta_color="inverse")
 
                 c3.markdown("### 🎈 Tekanan")
                 c3.metric("Sensor (Alat)", f"{p_sensor:.1f} hPa")
-                c3.metric("API (OpenWeather)", f"{p_owm:.1f} hPa", f"{delta_p:.1f} hPa (Selisih)", delta_color="inverse")
+                c3.metric("API OWM", f"{p_owm:.1f} hPa", f"{delta_p:.1f} hPa (Selisih)", delta_color="inverse")
 
                 st.divider()
 
@@ -306,8 +300,6 @@ while True:
                     "Nilai": [t_sensor, t_owm, h_sensor, h_owm, p_sensor, p_owm]
                 })
                 
-                # --- UPDATE: GRAFIK TEKANAN DIPISAH ---
-                # (Karena nilainya ribuan, susah dilihat kalau digabung dengan suhu/lembab)
                 g_comp1, g_comp2, g_comp3 = st.columns(3)
                 
                 with g_comp1:
