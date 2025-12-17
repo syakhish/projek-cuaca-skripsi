@@ -89,35 +89,28 @@ def get_status_sensor(row):
     if h < 1500: return "BADAI / LEBAT", "⛈️"
     if h < 2500: return "HUJAN DERAS", "🌧️"
     if h < 3900: return "GERIMIS", "🌦️"
+    
     if c < 100: return "MALAM HARI", "🌃"
     if c > 2500: return "CERAH", "☀️"
     return "BERAWAN", "☁️"
 
 # ================== TAMPILAN DASHBOARD ==================
 
-# --- SIDEBAR (DIPERBESAR) ---
+# --- SIDEBAR ---
 with st.sidebar:
+    col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
+    with col_logo2:
+        st.image(logo_path, use_container_width=True)
     
-    # 1. TAMPILKAN LOGO (UKURAN BESAR)
-    # Kita hapus st.columns agar gambar memenuhi lebar sidebar
-    st.image(logo_path, use_container_width=True) 
-    
-    # 2. JUDUL BESAR (CSS STYLE)
-    st.markdown("""
-        <div style='text-align: center; margin-top: 10px;'>
-            <h2 style='font-weight: 900; font-size: 26px; margin-bottom: 0px;'>Universitas Brawijaya</h2>
-            <h4 style='font-weight: 600; font-size: 18px; color: #888888; margin-top: 5px;'>Skripsi Teknik Komputer</h4>
-        </div>
-    """, unsafe_allow_html=True)
-    
+    st.markdown("<h3 style='text-align: center;'>Universitas Brawijaya</h3>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-size: small;'>Skripsi Teknik Komputer</p>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # 3. NAVIGASI
     st.title("🎛️ Navigasi")
     menu = st.radio("Pilih Menu:", ["📡 Monitor Sensor", "🌍 Data API (OWM)", "⚖️ Komparasi & Validasi"])
     st.markdown("---")
 
-    # 4. PENGATURAN TEMA
+    # Pengaturan Tema
     st.subheader("⚙️ Tampilan")
     tema_pilihan = st.radio("Mode:", ["Light", "Dark"], horizontal=True)
 
@@ -125,11 +118,7 @@ with st.sidebar:
         st.markdown("""
         <style>
             .stApp { background-color: #0E1117; color: #FFFFFF; }
-            section[data-testid="stSidebar"] { 
-                background-color: #262730; 
-                color: #FFFFFF;
-                min-width: 350px !important; /* MEMPERLEBAR SIDEBAR */
-            }
+            section[data-testid="stSidebar"] { background-color: #262730; color: #FFFFFF; }
             h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown { color: #FAFAFA !important; }
             [data-testid="stMetricValue"] { color: #00FF7F !important; }
             [data-testid="stMetricLabel"] { color: #CCCCCC !important; }
@@ -140,17 +129,36 @@ with st.sidebar:
         st.markdown("""
         <style>
             .stApp { background-color: #FFFFFF; color: #000000; }
-            section[data-testid="stSidebar"] { 
-                background-color: #F0F2F6; 
-                color: #000000;
-                min-width: 350px !important; /* MEMPERLEBAR SIDEBAR */
-            }
+            section[data-testid="stSidebar"] { background-color: #F0F2F6; color: #000000; }
             h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown { color: #31333F !important; }
             [data-testid="stMetricValue"] { color: #000000 !important; }
             [data-testid="stMetricLabel"] { color: #555555 !important; }
         </style>
         """, unsafe_allow_html=True)
     
+    st.markdown("---")
+    
+    # --- FITUR BARU: KETERANGAN ALERT ---
+    with st.expander("ℹ️ Keterangan Alert"):
+        st.markdown("""
+        **Sistem Peringatan Dini:**
+        
+        🔴 **BAHAYA**
+        - Kondisi: Badai / Hujan Lebat
+        - Sensor Hujan < 1500
+        
+        🟠 **PERINGATAN**
+        - Kondisi: Hujan Deras
+        - Sensor Hujan 1500 - 2500
+        
+        🟡 **WASPADA**
+        - Kondisi: Gerimis / Rintik
+        - Sensor Hujan 2500 - 3900
+        
+        🟢 **AMAN**
+        - Kondisi: Berawan / Cerah
+        """)
+
     st.markdown("---")
     
     df_owm, info_owm = baca_data_owm()
@@ -255,11 +263,17 @@ while True:
 
                 st.subheader("1. Perbandingan Nilai Terkini")
                 
+                # --- HITUNG DELTA ---
                 t_s, t_a = sensor_now.get('suhu', 0), owm_now['Suhu (°C)']
                 h_s, h_a = sensor_now.get('kelembapan', 0), owm_now['Kelembapan (%)']
                 p_s, p_a = sensor_now.get('tekanan', 0), owm_now['Tekanan (hPa)']
 
+                delta_t = t_sensor - t_owm
+                delta_h = h_sensor - h_owm
+                delta_p = p_sensor - p_owm
+
                 c1, c2, c3 = st.columns(3)
+                
                 c1.markdown("### 🌡️ Temperatur")
                 c1.metric("Sensor", f"{t_s:.1f} °C")
                 c1.metric("API OWM", f"{t_a:.1f} °C", f"{t_s - t_a:.1f} °C", delta_color="inverse")
