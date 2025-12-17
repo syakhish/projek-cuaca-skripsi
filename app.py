@@ -6,8 +6,9 @@ from datetime import datetime
 import pytz
 import xmltodict
 import urllib3
+import random
 
-# MATIKAN WARNING SSL (Supaya tidak muncul pesan error merah di terminal)
+# Matikan warning SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ----------------- KONFIGURASI HALAMAN -----------------
@@ -27,42 +28,58 @@ def ensure_list(item):
     if isinstance(item, list): return item
     return [item]
 
-# ----------------- FUNGSI 1: AMBIL DATA BMKG (BYPASS SSL) -----------------
+# ----------------- DATA CADANGAN (OFFLINE MODE) -----------------
+# Data ini akan dipakai jika internet error / BMKG down
+def get_data_dummy_malang():
+    # Simulasi data 24 jam ke depan
+    now = datetime.now(pytz.timezone('Asia/Jakarta'))
+    dummy_times = [now + timedelta(hours=i*6) for i in range(4)] # Per 6 jam
+    
+    # Format agar mirip struktur XML BMKG
+    params = [
+        {'@id': 't', 'timerange': [
+            {'@datetime': t.strftime("%Y%m%d%H%M"), 'value': [{'#text': str(random.randint(22, 30))}]} 
+            for t in dummy_times
+        ]},
+        {'@id': 'hu', 'timerange': [
+            {'@datetime': t.strftime("%Y%m%d%H%M"), 'value': {'#text': str(random.randint(60, 90))}} 
+            for t in dummy_times
+        ]},
+        {'@id': 'weather', 'timerange': [
+            {'@datetime': t.strftime("%Y%m%d%H%M"), 'value': {'#text': random.choice(['1', '3', '60'])}} 
+            for t in dummy_times
+        ]}
+    ]
+    return {'@description': 'Kota Malang (OFFLINE MODE)', 'parameter': params}
+
+# ----------------- FUNGSI 1: AMBIL DATA BMKG (TRY-EXCEPT) -----------------
 @st.cache_data(ttl=3600)
 def get_data_bmkg_lengkap():
-    """Mengambil data XML dengan mematikan verifikasi SSL"""
+    """Mengambil data XML. Jika gagal, pakai data dummy."""
     try:
-        # HEADER PALSU (Agar dianggap browser Chrome, bukan bot Python)
-        headers_palsu = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        # verify=False adalah KUNCI untuk menembus masalah SSL
-        response = requests.get(URL_BMKG, timeout=30, headers=headers_palsu, verify=False)
-        
-        # Parsing XML
+        headers_palsu = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(URL_BMKG, timeout=10, headers=headers_palsu, verify=False)
         data_dict = xmltodict.parse(response.content)
         forecast = data_dict.get('data', {}).get('forecast', {})
         areas = ensure_list(forecast.get('area'))
-        return areas, None
-        
+        return areas, None # Sukses
     except Exception as e:
-        return [], str(e)
+        # JIKA GAGAL, KEMBALIKAN DATA DUMMY
+        dummy_area = get_data_dummy_malang()
+        return [dummy_area], f"Mode Offline: {str(e)}"
 
 def get_pilihan_kota(areas):
-    """Membuat dictionary Nama Kota -> Data Area"""
     opsi = {}
     if not areas: return {}
-    
     for area in areas:
-        nama = area.get('@description')
-        if not nama: nama = f"ID {area.get('@id')}"
+        nama = area.get('@description', 'Tanpa Nama')
         opsi[nama] = area
     return opsi
 
-# ----------------- FUNGSI 2: PROSES DATA KOTA TERPILIH -----------------
+# ----------------- FUNGSI 2: PROSES DATA -----------------
 def proses_data_area(area_data):
     try:
+        from datetime import timedelta # Import di sini jaga-jaga
         params = ensure_list(area_data.get('parameter'))
         data_waktu = {}
 
@@ -92,16 +109,13 @@ def proses_data_area(area_data):
                         status = "Berawan"
                         if kode in ['0','1','2']: status = "Cerah"
                         elif kode in ['3','4']: status = "Berawan"
-                        elif kode in ['5','10','45']: status = "Kabut"
                         elif kode in ['60','61','63','80']: status = "Hujan"
-                        elif kode in ['95','97']: status = "Hujan Petir"
                         data_waktu[dt]['Cuaca'] = status
 
         if not data_waktu: return None
         
         df = pd.DataFrame(list(data_waktu.values())).sort_values('Waktu')
         df['Jam (WIB)'] = df['Waktu'].dt.strftime('%d-%m %H:%M')
-        
         cols = ['Jam (WIB)', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)']
         final_cols = [c for c in cols if c in df.columns]
         return df[final_cols]
@@ -125,7 +139,6 @@ def baca_data_sensor():
         return df
     except: return None
 
-# ----------------- LOGIKA STATUS SENSOR -----------------
 def get_status_sensor(row):
     h = row.get('hujan', 4095)
     c = row.get('cahaya', 0)
@@ -137,40 +150,45 @@ def get_status_sensor(row):
 
 # ================== UI DASHBOARD ==================
 
-# --- SIDEBAR ---
-st.sidebar.title("🎛️ Navigasi")
-menu = st.sidebar.radio("Menu:", ["📡 Monitor Sensor", "🏢 Data BMKG"])
+# --- SIDEBAR NAVIGASI ---
+st.sidebar.title("🎛️ Panel Kontrol")
+menu = st.sidebar.radio("Pilih Menu:", ["📡 Monitor Sensor", "🏢 Data BMKG"])
+
 st.sidebar.markdown("---")
 
-nama_kota_terpilih = "Belum Dipilih"
+nama_kota_terpilih = "Kota Malang (OFFLINE MODE)"
 df_bmkg_hasil = None
-status_koneksi = "OK"
+status_msg = ""
 
 if menu == "🏢 Data BMKG":
-    st.sidebar.subheader("📍 Lokasi BMKG")
-    areas, error_msg = get_data_bmkg_lengkap()
+    st.sidebar.subheader("📍 Lokasi")
     
-    if error_msg:
-        st.sidebar.error("Gagal koneksi ke BMKG")
-        st.sidebar.caption(f"Error: {error_msg}")
-        status_koneksi = "ERROR"
-    else:
-        opsi_kota = get_pilihan_kota(areas)
-        if opsi_kota:
-            list_nama = sorted(list(opsi_kota.keys()))
-            idx = 0
-            if "Kota Malang" in list_nama: idx = list_nama.index("Kota Malang")
-            
-            pilihan = st.sidebar.selectbox("Pilih Kota:", list_nama, index=idx)
-            
-            data_area_raw = opsi_kota[pilihan]
-            df_bmkg_hasil = proses_data_area(data_area_raw)
-            nama_kota_terpilih = pilihan
-        else:
-            st.sidebar.warning("Data XML Kosong")
+    # Ambil Data (Asli atau Dummy)
+    areas, msg = get_data_bmkg_lengkap()
+    status_msg = msg
+    
+    opsi_kota = get_pilihan_kota(areas)
+    
+    if opsi_kota:
+        list_nama = sorted(list(opsi_kota.keys()))
+        
+        # Cari default Malang
+        idx = 0
+        for i, nama in enumerate(list_nama):
+            if "Malang" in nama: 
+                idx = i
+                break
+        
+        pilihan = st.sidebar.selectbox("Pilih Kota:", list_nama, index=idx)
+        
+        data_area_raw = opsi_kota[pilihan]
+        df_bmkg_hasil = proses_data_area(data_area_raw)
+        nama_kota_terpilih = pilihan
 
 # --- MAIN CONTENT ---
 placeholder = st.empty()
+
+from datetime import timedelta # Import ulang di global biar aman
 
 while True:
     st.cache_data.clear()
@@ -178,7 +196,7 @@ while True:
     
     with placeholder.container():
         
-        # ---------------- MENU 1: SENSOR ----------------
+        # ================= TAMPILAN 1: SENSOR =================
         if menu == "📡 Monitor Sensor":
             st.title("📡 Monitoring Cuaca Real-Time")
             st.markdown("---")
@@ -190,7 +208,7 @@ while True:
                 c1, c2 = st.columns([1, 4])
                 with c1: st.markdown(f"# {ico}")
                 with c2: 
-                    st.info(f"Kondisi: **{stat}**")
+                    st.info(f"Status: **{stat}**")
                     st.caption(f"Update: {now['timestamp'].strftime('%d %b %Y, %H:%M:%S')} WIB")
                     if "Hujan" in stat or "BADAI" in stat: st.error("PERINGATAN HUJAN!")
                 
@@ -215,26 +233,29 @@ while True:
                     st.area_chart(df_chart[['cahaya', 'hujan']])
                 
                 st.divider()
-                st.subheader("📂 Riwayat Data")
+                st.subheader("📂 Riwayat Data Sensor (1000 Data)")
                 st.dataframe(df_iot.sort_values(by='timestamp', ascending=False).head(1000), use_container_width=True)
 
             else:
                 st.warning("Menunggu data alat ESP32...")
                 st.spinner("Sedang memuat...")
 
-        # ---------------- MENU 2: BMKG ----------------
+        # ================= TAMPILAN 2: BMKG =================
         elif menu == "🏢 Data BMKG":
             st.title(f"🏢 Prakiraan Cuaca: {nama_kota_terpilih}")
             st.markdown("---")
             
-            if status_koneksi == "ERROR":
-                st.error("⚠️ Gagal terhubung ke BMKG.")
-                st.warning("Cek koneksi internet Anda atau coba matikan VPN/Proxy.")
-            elif df_bmkg_hasil is not None:
-                st.success(f"Data Prakiraan Cuaca untuk **{nama_kota_terpilih}**")
+            # Notifikasi Status Koneksi
+            if status_msg:
+                st.warning(f"⚠️ Koneksi ke server BMKG gagal. Menampilkan data cadangan.")
+                st.caption(f"Detail Error: {status_msg}")
+            else:
+                st.success("✅ Terhubung ke Server BMKG (Data Asli)")
+            
+            if df_bmkg_hasil is not None:
                 st.dataframe(df_bmkg_hasil, use_container_width=True, hide_index=True)
                 st.line_chart(df_bmkg_hasil.set_index('Jam (WIB)')[['Suhu (°C)', 'Kelembapan (%)']])
             else:
-                st.info("Sedang memuat data...")
+                st.error("Data tidak dapat ditampilkan.")
 
     time.sleep(15)
