@@ -14,9 +14,16 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- KONFIGURASI GAMBAR LOGO ---
-FILE_LOGO_LOKAL = "UBLOGO.png" 
-URL_LOGO_ONLINE = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
+# --- LOGIKA GAMBAR LOGO (JPG/PNG/ONLINE) ---
+# Cek file lokal dulu (Prioritas)
+logo_path = None
+if os.path.exists("UBLOGO.png"):
+    logo_path = "UBLOGO.png"
+elif os.path.exists("UBLOGO.jpg"):
+    logo_path = "UBLOGO.jpg"
+else:
+    # Fallback ke Online jika file lokal tidak ada
+    logo_path = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
 
 # --- KONFIGURASI API ---
 API_SENSOR = "http://syakhish.pythonanywhere.com/get_data"
@@ -95,22 +102,20 @@ def get_status_sensor(row):
 
 # ================== TAMPILAN DASHBOARD ==================
 
-# --- SIDEBAR (HEADER & NAVIGASI) ---
+# --- SIDEBAR NAVIGASI ---
 with st.sidebar:
-    # 1. Logo
+    # 1. Tampilkan Logo
     col_logo1, col_logo2, col_logo3 = st.columns([1, 2, 1])
     with col_logo2:
-        if os.path.exists(FILE_LOGO_LOKAL):
-            st.image(FILE_LOGO_LOKAL, use_container_width=True)
-        else:
-            st.image(URL_LOGO_ONLINE, use_container_width=True)
+        st.image(logo_path, use_container_width=True)
     
+    # 2. Judul (Styling nanti ikut tema)
     st.markdown("<h3 style='text-align: center;'>Universitas Brawijaya</h3>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; font-size: small;'>Skripsi Teknik Komputer</p>", unsafe_allow_html=True)
     
     st.markdown("---")
     
-    # 2. Navigasi
+    # 3. Navigasi
     st.title("🎛️ Navigasi")
     menu = st.radio("Pilih Menu:", [
         "📡 Monitor Sensor", 
@@ -120,50 +125,76 @@ with st.sidebar:
     
     st.markdown("---")
 
-    # 3. PENGATURAN TEMA (NEW FEATURE)
+    # 4. PENGATURAN TEMA & WARNA (LOGIKA CSS DI SINI)
     st.subheader("⚙️ Tampilan")
-    tema_pilihan = st.radio("Mode Warna:", ["Light", "Dark"], horizontal=True)
+    tema_pilihan = st.radio("Mode:", ["Light", "Dark"], horizontal=True)
 
-    # Logika CSS Injection untuk Tema
     if tema_pilihan == "Dark":
         st.markdown("""
         <style>
-            /* Background Utama Gelap */
+            /* --- MODE GELAP (DARK) --- */
+            
+            /* Background Utama */
             .stApp {
-                background-color: #0E1117;
-                color: #FAFAFA;
+                background-color: #0E1117; /* Hitam Abu Streamlit */
+                color: #FFFFFF; /* Teks Putih */
             }
-            /* Sidebar Gelap */
+            
+            /* Sidebar */
             section[data-testid="stSidebar"] {
-                background-color: #262730;
-                color: #FAFAFA;
+                background-color: #262730; /* Abu Gelap */
+                color: #FFFFFF;
             }
-            /* Header & Teks */
-            h1, h2, h3, p, span {
-                color: #FAFAFA !important;
+            
+            /* Judul & Teks Biasa */
+            h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown {
+                color: #FAFAFA !important; /* Putih Terang */
             }
-            /* Warna Metric Value */
+            
+            /* Metrik (Angka Besar) */
             [data-testid="stMetricValue"] {
-                color: #FAFAFA !important;
+                color: #00FF7F !important; /* Hijau Neon agar kontras */
+            }
+            /* Label Metrik (Kecil) */
+            [data-testid="stMetricLabel"] {
+                color: #CCCCCC !important; /* Abu Terang */
+            }
+            
+            /* Tabel */
+            .stDataFrame {
+                background-color: #262730;
             }
         </style>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
         <style>
-            /* Background Utama Terang */
+            /* --- MODE TERANG (LIGHT) --- */
+            
+            /* Background Utama */
             .stApp {
-                background-color: #FFFFFF;
-                color: #31333F;
+                background-color: #FFFFFF; /* Putih Bersih */
+                color: #000000; /* Teks Hitam */
             }
-            /* Sidebar Terang */
+            
+            /* Sidebar */
             section[data-testid="stSidebar"] {
-                background-color: #F0F2F6;
-                color: #31333F;
+                background-color: #F0F2F6; /* Abu Sangat Muda */
+                color: #000000;
             }
-            /* Warna Teks Default */
-            h1, h2, h3, p, span {
-                color: #31333F !important;
+            
+            /* Judul & Teks Biasa */
+            h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown {
+                color: #31333F !important; /* Hitam Abu */
+            }
+            
+            /* Metrik (Angka Besar) */
+            [data-testid="stMetricValue"] {
+                color: #000000 !important; /* Hitam Pekat */
+            }
+            /* Label Metrik (Kecil) */
+            [data-testid="stMetricLabel"] {
+                color: #555555 !important; /* Abu Gelap */
             }
         </style>
         """, unsafe_allow_html=True)
