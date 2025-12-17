@@ -15,7 +15,7 @@ st.set_page_config(
 
 # --- KONFIGURASI GAMBAR LOGO ---
 # Ganti "UBLOGO.png" sesuai dengan nama file dan ekstensi gambar kamu (.jpg/.png)
-FILE_LOGO_LOKAL = "UBLOGO.png" 
+FILE_LOGO_LOKAL = "UBLOGO.jpg" 
 URL_LOGO_ONLINE = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
 
 # --- KONFIGURASI API ---
@@ -269,3 +269,4 @@ while True:
                 st.warning("Menunggu data lengkap dari Sensor dan API untuk melakukan komparasi...")
 
     time.sleep(15)
+
