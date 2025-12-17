@@ -21,6 +21,9 @@ OWM_API_KEY = "29ff3120fea57ee5ee3298bef9c55b3f"
 KOTA_OWM = "Malang"
 URL_OWM = f"https://api.openweathermap.org/data/2.5/forecast?q={KOTA_OWM}&appid={OWM_API_KEY}&units=metric&lang=id"
 
+# URL LOGO UNIVERSITAS BRAWIJAYA
+URL_LOGO_UB = "https://upload.wikimedia.org/wikipedia/commons/b/bb/Logo_Universitas_Brawijaya.png"
+
 # ----------------- FUNGSI 1: BACA SENSOR (ESP32) -----------------
 def baca_data_sensor():
     try:
@@ -92,25 +95,33 @@ def get_status_sensor(row):
 
 # ================== TAMPILAN DASHBOARD ==================
 
-# --- SIDEBAR NAVIGASI ---
-st.sidebar.title("🎛️ Navigasi")
-# MENAMBAHKAN TAB BARU DI SINI
-menu = st.sidebar.radio("Pilih Menu:", [
-    "📡 Monitor Sensor", 
-    "🌍 Data API (OWM)", 
-    "⚖️ Komparasi & Validasi"
-])
-st.sidebar.markdown("---")
+# --- SIDEBAR NAVIGASI (DENGAN LOGO UB) ---
+with st.sidebar:
+    # 1. Menampilkan Logo (Tengah)
+    st.image(URL_LOGO_UB, width=150) 
+    
+    # 2. Judul Navigasi
+    st.title("🎛️ Navigasi")
+    
+    # 3. Menu Pilihan
+    menu = st.radio("Pilih Menu:", [
+        "📡 Monitor Sensor", 
+        "🌍 Data API (OWM)", 
+        "⚖️ Komparasi & Validasi"
+    ])
+    
+    st.markdown("---")
+    
+    # Info Lokasi API (Hanya muncul jika bukan menu sensor)
+    df_owm, info_owm = baca_data_owm()
+    if menu != "📡 Monitor Sensor":
+        st.subheader("📍 Lokasi API")
+        if df_owm is not None:
+            st.success(f"{info_owm}")
+        else:
+            st.warning("Menghubungkan...")
 
-# Cek Koneksi OWM di Sidebar
-df_owm, info_owm = baca_data_owm()
-
-if menu == "🌍 Data API (OWM)" or menu == "⚖️ Komparasi & Validasi":
-    st.sidebar.subheader("📍 Info Lokasi API")
-    if df_owm is not None:
-        st.sidebar.success(f"Terhubung ke: {info_owm}")
-    else:
-        st.sidebar.warning("Sedang menghubungkan API...")
+    st.caption("© 2025 Skripsi Teknik Elektro")
 
 # --- MAIN LOOP ---
 placeholder = st.empty()
@@ -186,21 +197,17 @@ while True:
             else:
                 st.error("Gagal mengambil data OpenWeatherMap.")
 
-        # ============ TAB 3: KOMPARASI & VALIDASI (BARU) ============
+        # ============ TAB 3: KOMPARASI & VALIDASI ============
         elif menu == "⚖️ Komparasi & Validasi":
             st.title("⚖️ Validasi Data: Sensor vs API")
             st.markdown("---")
 
             if df_iot is not None and df_owm is not None:
-                # Ambil Data Terkini
                 sensor_now = df_iot.iloc[-1]
-                # Ambil Data API yang paling awal (current forecast)
                 owm_now = df_owm.iloc[0]
 
-                # --- 1. METRIK KOMPARASI ---
                 st.subheader("1. Perbandingan Nilai Terkini")
                 
-                # Hitung Delta
                 t_sensor = sensor_now.get('suhu', 0)
                 t_owm = owm_now['Suhu (°C)']
                 delta_t = t_sensor - t_owm
@@ -211,22 +218,17 @@ while True:
 
                 col_comp1, col_comp2 = st.columns(2)
                 
-                # Metric Suhu
                 col_comp1.markdown("### 🌡️ Temperatur")
                 col_comp1.metric("Sensor (Alat)", f"{t_sensor:.1f} °C")
                 col_comp1.metric("API (OpenWeather)", f"{t_owm:.1f} °C", f"{delta_t:.1f} °C (Selisih)", delta_color="inverse")
                 
-                # Metric Kelembapan
                 col_comp2.markdown("### 💧 Kelembapan")
                 col_comp2.metric("Sensor (Alat)", f"{h_sensor:.1f} %")
                 col_comp2.metric("API (OpenWeather)", f"{h_owm:.1f} %", f"{delta_h:.1f} % (Selisih)", delta_color="inverse")
 
                 st.divider()
 
-                # --- 2. TABEL SIDE-BY-SIDE ---
                 st.subheader("2. Tabel Validasi")
-                st.caption("Membandingkan pembacaan alat secara real-time dengan data prakiraan API saat ini.")
-                
                 comparison_data = {
                     "Parameter": ["Suhu (°C)", "Kelembapan (%)", "Status Cuaca"],
                     "📡 Sensor ESP32": [f"{t_sensor:.1f}", f"{h_sensor:.1f}", get_status_sensor(sensor_now)[0]],
@@ -237,17 +239,13 @@ while True:
                 
                 st.divider()
                 
-                # --- 3. GRAFIK BATANG (BAR CHART) ---
                 st.subheader("3. Visualisasi Perbandingan")
-                
-                # Siapkan data untuk Bar Chart
                 bar_data = pd.DataFrame({
                     "Sumber": ["Sensor", "API", "Sensor", "API"],
                     "Tipe": ["Suhu", "Suhu", "Kelembapan", "Kelembapan"],
                     "Nilai": [t_sensor, t_owm, h_sensor, h_owm]
                 })
                 
-                # Kita pisah grafik Suhu dan Lembab biar skalanya pas
                 g_comp1, g_comp2 = st.columns(2)
                 
                 with g_comp1:
