@@ -17,8 +17,18 @@ st.set_page_config(
 API_URL = "http://syakhish.pythonanywhere.com/get_data"
 # URL XML BMKG Jawa Timur
 URL_BMKG = "https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml"
-# ID KOTA MALANG (Lebih stabil pakai ID daripada Nama)
+
+# ID KOTA MALANG
 ID_KOTA_BMKG = "501262" 
+
+# ----------------- FUNGSI BANTUAN (PENTING) -----------------
+def ensure_list(item):
+    """Memastikan data selalu berupa list agar tidak error saat looping"""
+    if item is None:
+        return []
+    if isinstance(item, list):
+        return item
+    return [item]
 
 # ----------------- FUNGSI BACA SENSOR (ESP32) -----------------
 def baca_data_dari_api():
@@ -44,91 +54,104 @@ def baca_data_dari_api():
     except Exception as e:
         return None
 
-# ----------------- FUNGSI BACA BMKG (FIXED) -----------------
+# ----------------- FUNGSI BACA BMKG (VERSI ANTI-CRASH) -----------------
 @st.cache_data(ttl=3600)
 def ambil_data_bmkg_tabel():
     try:
         response = requests.get(URL_BMKG, timeout=10)
+        # Parsing XML
         data_dict = xmltodict.parse(response.content)
-        areas = data_dict['data']['forecast']['area']
         
-        # 1. Cari Area Berdasarkan ID 501262 (Kota Malang)
+        # Navigasi aman ke node Area
+        forecast = data_dict.get('data', {}).get('forecast', {})
+        areas = ensure_list(forecast.get('area'))
+        
+        if not areas: return None, "Data XML Kosong"
+
+        # 1. CARI LOKASI (Prioritas ID -> Prioritas Nama -> Ambil Pertama)
         target_area = None
         
-        # Handle jika areas bukan list (cuma 1 area di file)
-        if not isinstance(areas, list):
-            areas = [areas]
-            
+        # Coba cari ID 501262
         for area in areas:
-            if area['@id'] == ID_KOTA_BMKG:
+            if area.get('@id') == ID_KOTA_BMKG:
                 target_area = area
                 break
         
-        # Fallback: Jika ID tidak ketemu, cari pakai Nama
+        # Jika tidak ketemu, cari yang namanya mengandung "Malang"
         if target_area is None:
             for area in areas:
-                if "Kota Malang" in area['@description']:
+                desc = area.get('@description', '').lower()
+                if "kota malang" in desc or "malang" in desc:
                     target_area = area
                     break
+        
+        if target_area is None: return None, "Kota Malang Tidak Ditemukan di XML"
 
-        if not target_area: return None, "Lokasi Tidak Ditemukan di XML"
-        
-        params = target_area['parameter']
-        
-        # Kita kumpulkan data ke dalam Dictionary waktu
+        # 2. EKSTRAK PARAMETER
+        params = ensure_list(target_area.get('parameter'))
         data_waktu = {}
 
         for p in params:
-            param_id = p['@id']
+            param_id = p.get('@id')
+            
             if param_id in ['t', 'hu', 'weather']:
+                # Loop setiap rentang waktu
+                timeranges = ensure_list(p.get('timerange'))
                 
-                # Handle jika timerange bukan list (cuma 1 waktu)
-                timeranges = p['timerange']
-                if not isinstance(timeranges, list):
-                    timeranges = [timeranges]
-
                 for item in timeranges:
-                    # Waktu
-                    dt_str = item['@datetime']
-                    dt = datetime.strptime(dt_str, "%Y%m%d%H%M")
-                    dt = pytz.utc.localize(dt).astimezone(pytz.timezone('Asia/Jakarta'))
+                    # Ambil Waktu
+                    dt_str = item.get('@datetime')
+                    if not dt_str: continue
                     
+                    try:
+                        dt = datetime.strptime(dt_str, "%Y%m%d%H%M")
+                        dt = pytz.utc.localize(dt).astimezone(pytz.timezone('Asia/Jakarta'))
+                    except: continue
+
                     if dt not in data_waktu:
                         data_waktu[dt] = {'Waktu': dt}
                     
-                    val = item['value']
-                    # Jika value berupa list, ambil yang pertama
-                    if isinstance(val, list): val = val[0]['#text']
-                    elif isinstance(val, dict): val = val['#text']
+                    # Ambil Nilai
+                    val_obj = item.get('value')
+                    val = "0"
                     
-                    if param_id == 't': data_waktu[dt]['Suhu (°C)'] = float(val)
-                    if param_id == 'hu': data_waktu[dt]['Kelembapan (%)'] = float(val)
-                    if param_id == 'weather': 
-                        # Translate kode cuaca sederhana
+                    # Handle jika value ada unitnya atau list
+                    if isinstance(val_obj, list):
+                        val = val_obj[0].get('#text', '0')
+                    elif isinstance(val_obj, dict):
+                        val = val_obj.get('#text', '0')
+                    else:
+                        val = str(val_obj)
+
+                    # Masukkan ke dictionary
+                    if param_id == 't': 
+                        data_waktu[dt]['Suhu (°C)'] = float(val)
+                    if param_id == 'hu': 
+                        data_waktu[dt]['Kelembapan (%)'] = float(val)
+                    if param_id == 'weather':
                         kode = val
-                        ket = "Berawan" # Default
-                        # Mapping kode cuaca BMKG
+                        ket = "Berawan"
                         if kode in ['0', '1', '2']: ket = "Cerah"
                         elif kode in ['3', '4']: ket = "Berawan"
-                        elif kode in ['5', '10', '45']: ket = "Kabut/Asap"
+                        elif kode in ['5', '10', '45']: ket = "Kabut"
                         elif kode in ['60', '61', '63', '80']: ket = "Hujan"
                         elif kode in ['95', '97']: ket = "Badai Petir"
                         data_waktu[dt]['Cuaca'] = ket
 
-        # Ubah ke DataFrame
-        if not data_waktu: return None, "Format Data Kosong"
+        # 3. CONVERT KE DATAFRAME
+        if not data_waktu: return None, "Format Data Parameter Salah"
 
         list_data = list(data_waktu.values())
         df_bmkg = pd.DataFrame(list_data).sort_values('Waktu')
         
-        # Format kolom Waktu agar enak dibaca (String)
+        # Format Tampilan Waktu (String)
         df_bmkg['Jam (WIB)'] = df_bmkg['Waktu'].dt.strftime('%d-%m %H:%M')
-        # Pindahkan kolom Jam ke depan
+        
+        # Urutan Kolom
         cols = ['Jam (WIB)', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)']
-        # Filter kolom yang ada saja
         cols_final = [c for c in cols if c in df_bmkg.columns]
         
-        return df_bmkg[cols_final], target_area['@description']
+        return df_bmkg[cols_final], target_area.get('@description', 'Unknown')
 
     except Exception as e:
         return None, f"Error System: {str(e)}"
@@ -176,7 +199,7 @@ while True:
 
             st.markdown("---")
 
-            # --- METRICS (SENSOR ONLY) ---
+            # --- METRICS (HANYA SENSOR) ---
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("🌡️ Suhu", f"{current.get('suhu', 0):.1f} °C")
             k2.metric("💧 Kelembapan", f"{current.get('kelembapan', 0):.1f} %")
@@ -217,12 +240,13 @@ while True:
             
             with tab2:
                 if df_bmkg is not None:
-                    st.success(f"Lokasi: {lokasi_bmkg}")
-                    # Menampilkan tabel BMKG tanpa index angka
-                    st.dataframe(df_bmkg.reset_index(drop=True), use_container_width=True)
+                    st.success(f"Lokasi Data BMKG: {lokasi_bmkg}")
+                    # Tampilkan tabel dengan lebar penuh
+                    st.dataframe(df_bmkg, use_container_width=True, hide_index=True)
                 else:
-                    # Menampilkan Pesan Error Spesifik jika gagal
-                    st.error(f"Data BMKG tidak tersedia. Info Error: {lokasi_bmkg}")
+                    # Tampilkan error detail jika masih gagal
+                    st.error(f"Gagal memuat data BMKG. Pesan: {lokasi_bmkg}")
+                    st.markdown("[Klik disini untuk cek XML BMKG](https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml)")
 
     else:
         with placeholder.container():
