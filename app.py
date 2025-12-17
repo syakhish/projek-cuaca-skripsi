@@ -2,14 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-from datetime import datetime, timedelta  # <--- PERBAIKAN DI SINI (Ditambah timedelta)
+from datetime import datetime
 import pytz
-import xmltodict
-import urllib3
-import random
-
-# Matikan warning SSL
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ----------------- KONFIGURASI HALAMAN -----------------
 st.set_page_config(
@@ -19,126 +13,31 @@ st.set_page_config(
 )
 
 # --- KONFIGURASI API ---
-API_URL = "http://syakhish.pythonanywhere.com/get_data"
-URL_BMKG = "https://data.bmkg.go.id/DataMKG/MEWS/DigitalForecast/DigitalForecast-JawaTimur.xml"
+# 1. API Sensor ESP32 (Backend Kamu)
+API_SENSOR = "http://syakhish.pythonanywhere.com/get_data"
 
-# ----------------- FUNGSI BANTUAN -----------------
-def ensure_list(item):
-    if item is None: return []
-    if isinstance(item, list): return item
-    return [item]
+# 2. API OpenWeatherMap (Key yang baru kamu berikan)
+OWM_API_KEY = "29ff3120fea57ee5ee3298bef9c55b3f" 
+KOTA_OWM = "Malang"
 
-# ----------------- DATA CADANGAN (OFFLINE MODE) -----------------
-# Data ini akan dipakai jika internet error / BMKG down
-def get_data_dummy_malang():
-    # Simulasi data 24 jam ke depan
-    now = datetime.now(pytz.timezone('Asia/Jakarta'))
-    # timedelta sekarang sudah dikenali
-    dummy_times = [now + timedelta(hours=i*6) for i in range(4)] 
-    
-    # Format agar mirip struktur XML BMKG
-    params = [
-        {'@id': 't', 'timerange': [
-            {'@datetime': t.strftime("%Y%m%d%H%M"), 'value': [{'#text': str(random.randint(22, 30))}]} 
-            for t in dummy_times
-        ]},
-        {'@id': 'hu', 'timerange': [
-            {'@datetime': t.strftime("%Y%m%d%H%M"), 'value': {'#text': str(random.randint(60, 90))}} 
-            for t in dummy_times
-        ]},
-        {'@id': 'weather', 'timerange': [
-            {'@datetime': t.strftime("%Y%m%d%H%M"), 'value': {'#text': random.choice(['1', '3', '60'])}} 
-            for t in dummy_times
-        ]}
-    ]
-    return {'@description': 'Kota Malang (OFFLINE MODE)', 'parameter': params}
+# URL untuk mengambil data Forecast (Perkiraan 5 hari / per 3 jam)
+URL_OWM = f"https://api.openweathermap.org/data/2.5/forecast?q={KOTA_OWM}&appid={OWM_API_KEY}&units=metric&lang=id"
 
-# ----------------- FUNGSI 1: AMBIL DATA BMKG (TRY-EXCEPT) -----------------
-@st.cache_data(ttl=3600)
-def get_data_bmkg_lengkap():
-    """Mengambil data XML. Jika gagal, pakai data dummy."""
-    try:
-        headers_palsu = {'User-Agent': 'Mozilla/5.0'}
-        # Coba koneksi asli
-        response = requests.get(URL_BMKG, timeout=10, headers=headers_palsu, verify=False)
-        data_dict = xmltodict.parse(response.content)
-        forecast = data_dict.get('data', {}).get('forecast', {})
-        areas = ensure_list(forecast.get('area'))
-        
-        # Validasi isi data
-        if not areas: raise Exception("Data XML Kosong")
-            
-        return areas, None # Sukses (msg = None)
-        
-    except Exception as e:
-        # JIKA GAGAL, KEMBALIKAN DATA DUMMY
-        # Agar dashboard tidak crash saat presentasi
-        dummy_area = get_data_dummy_malang()
-        return [dummy_area], f"Mode Offline: {str(e)}"
-
-def get_pilihan_kota(areas):
-    opsi = {}
-    if not areas: return {}
-    for area in areas:
-        nama = area.get('@description', 'Tanpa Nama')
-        opsi[nama] = area
-    return opsi
-
-# ----------------- FUNGSI 2: PROSES DATA -----------------
-def proses_data_area(area_data):
-    try:
-        params = ensure_list(area_data.get('parameter'))
-        data_waktu = {}
-
-        for p in params:
-            param_id = p.get('@id')
-            if param_id in ['t', 'hu', 'weather']:
-                timeranges = ensure_list(p.get('timerange'))
-                for item in timeranges:
-                    dt_str = item.get('@datetime')
-                    try:
-                        dt = datetime.strptime(dt_str, "%Y%m%d%H%M")
-                        dt = pytz.utc.localize(dt).astimezone(pytz.timezone('Asia/Jakarta'))
-                    except: continue
-
-                    if dt not in data_waktu: data_waktu[dt] = {'Waktu': dt}
-                    
-                    val_raw = item.get('value')
-                    val = "0"
-                    if isinstance(val_raw, list): val = val_raw[0].get('#text', '0')
-                    elif isinstance(val_raw, dict): val = val_raw.get('#text', '0')
-                    else: val = str(val_raw)
-                    
-                    if param_id == 't': data_waktu[dt]['Suhu (°C)'] = float(val)
-                    if param_id == 'hu': data_waktu[dt]['Kelembapan (%)'] = float(val)
-                    if param_id == 'weather':
-                        kode = val
-                        status = "Berawan"
-                        if kode in ['0','1','2']: status = "Cerah"
-                        elif kode in ['3','4']: status = "Berawan"
-                        elif kode in ['60','61','63','80']: status = "Hujan"
-                        data_waktu[dt]['Cuaca'] = status
-
-        if not data_waktu: return None
-        
-        df = pd.DataFrame(list(data_waktu.values())).sort_values('Waktu')
-        df['Jam (WIB)'] = df['Waktu'].dt.strftime('%d-%m %H:%M')
-        cols = ['Jam (WIB)', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)']
-        final_cols = [c for c in cols if c in df.columns]
-        return df[final_cols]
-    except: return None
-
-# ----------------- FUNGSI 3: BACA SENSOR -----------------
+# ----------------- FUNGSI 1: BACA SENSOR (ESP32) -----------------
 def baca_data_sensor():
     try:
         headers = {'Cache-Control': 'no-cache'}
-        r = requests.get(API_URL, timeout=10, headers=headers)
+        # Request data ke PythonAnywhere
+        r = requests.get(API_SENSOR, timeout=10, headers=headers)
         if r.status_code != 200: return None
+        
         data = r.json()
         if not isinstance(data, list): return None
+        
         df = pd.DataFrame(data)
         if 'timestamp' not in df.columns: return None
         
+        # Konversi Timestamp UNIX ke Waktu WIB
         df['ts'] = pd.to_numeric(df['timestamp'], errors='coerce')
         df.dropna(subset=['ts'], inplace=True)
         df['dt'] = pd.to_datetime(df['ts'], unit='s', utc=True)
@@ -146,62 +45,99 @@ def baca_data_sensor():
         return df
     except: return None
 
+# ----------------- FUNGSI 2: BACA OPENWEATHERMAP -----------------
+@st.cache_data(ttl=1800) # Simpan cache selama 30 menit
+def baca_data_owm():
+    try:
+        r = requests.get(URL_OWM, timeout=10)
+        data = r.json()
+        
+        # Cek kode response dari OWM
+        if str(data.get("cod")) != "200":
+            return None, f"Error OWM: {data.get('message', 'Gagal')}"
+        
+        # Ambil List Data
+        forecast_list = data.get('list', [])
+        parsed_data = []
+        
+        for item in forecast_list:
+            # Waktu (UTC -> WIB)
+            dt_txt = item['dt_txt']
+            dt_obj = datetime.strptime(dt_txt, "%Y-%m-%d %H:%M:%S")
+            dt_utc = pytz.utc.localize(dt_obj)
+            dt_wib = dt_utc.astimezone(pytz.timezone('Asia/Jakarta'))
+            
+            # Data Utama
+            temp = item['main']['temp']
+            hum = item['main']['humidity']
+            desc = item['weather'][0]['description'] # Deskripsi cuaca (Bahasa Indo)
+            
+            # Icon Mapping (Sederhana)
+            icon_code = item['weather'][0]['icon']
+            status_simpel = "Berawan"
+            if "01" in icon_code: status_simpel = "Cerah"
+            elif "02" in icon_code: status_simpel = "Cerah Berawan"
+            elif "09" in icon_code or "10" in icon_code: status_simpel = "Hujan"
+            elif "11" in icon_code: status_simpel = "Petir"
+            
+            parsed_data.append({
+                'Waktu': dt_wib,
+                'Jam': dt_wib.strftime("%d-%m %H:%M"),
+                'Suhu (°C)': float(temp),
+                'Kelembapan (%)': float(hum),
+                'Cuaca': desc.title(),
+                'Status': status_simpel
+            })
+            
+        df = pd.DataFrame(parsed_data)
+        nama_kota = data.get('city', {}).get('name', KOTA_OWM)
+        return df, nama_kota
+
+    except Exception as e:
+        return None, str(e)
+
+# ----------------- LOGIKA STATUS SENSOR (RULE-BASED) -----------------
 def get_status_sensor(row):
+    # Logika menentukan ikon berdasarkan nilai sensor
     h = row.get('hujan', 4095)
     c = row.get('cahaya', 0)
-    if h < 1500: return "BADAI", "⛈️"
-    if h < 3900: return "HUJAN", "🌧️"
-    if c < 100: return "MALAM", "🌃"
+    
+    if h < 1500: return "BADAI / LEBAT", "⛈️"
+    if h < 2500: return "HUJAN DERAS", "🌧️"
+    if h < 3900: return "GERIMIS", "🌦️"
+    
+    if c < 100: return "MALAM HARI", "🌃"
     if c > 2500: return "CERAH", "☀️"
     return "BERAWAN", "☁️"
 
-# ================== UI DASHBOARD ==================
+# ================== TAMPILAN DASHBOARD (UI) ==================
 
 # --- SIDEBAR NAVIGASI ---
-st.sidebar.title("🎛️ Panel Kontrol")
-menu = st.sidebar.radio("Pilih Menu:", ["📡 Monitor Sensor", "🏢 Data BMKG"])
-
+st.sidebar.title("🎛️ Navigasi")
+menu = st.sidebar.radio("Pilih Menu:", ["📡 Monitor Sensor", "🌍 Data Pembanding (OWM)"])
 st.sidebar.markdown("---")
 
-nama_kota_terpilih = "Kota Malang (OFFLINE MODE)"
-df_bmkg_hasil = None
-status_msg = ""
+# Cek Koneksi OWM di Sidebar
+df_owm, info_owm = baca_data_owm()
 
-if menu == "🏢 Data BMKG":
-    st.sidebar.subheader("📍 Lokasi")
-    
-    # Ambil Data (Asli atau Dummy)
-    areas, msg = get_data_bmkg_lengkap()
-    status_msg = msg
-    
-    opsi_kota = get_pilihan_kota(areas)
-    
-    if opsi_kota:
-        list_nama = sorted(list(opsi_kota.keys()))
-        
-        # Cari default Malang
-        idx = 0
-        for i, nama in enumerate(list_nama):
-            if "Malang" in nama: 
-                idx = i
-                break
-        
-        pilihan = st.sidebar.selectbox("Pilih Kota:", list_nama, index=idx)
-        
-        data_area_raw = opsi_kota[pilihan]
-        df_bmkg_hasil = proses_data_area(data_area_raw)
-        nama_kota_terpilih = pilihan
+if menu == "🌍 Data Pembanding (OWM)":
+    st.sidebar.subheader("📍 Info Lokasi")
+    if df_owm is not None:
+        st.sidebar.success(f"Terhubung ke: {info_owm}")
+    else:
+        st.sidebar.warning("Sedang menghubungkan ke API...")
+        st.sidebar.caption("Jika error 'Invalid API Key', tunggu 10-60 menit setelah pendaftaran.")
 
-# --- MAIN CONTENT ---
+# --- KONTEN UTAMA ---
 placeholder = st.empty()
 
 while True:
-    st.cache_data.clear()
+    st.cache_data.clear() # Agar sensor selalu update real-time
     df_iot = baca_data_sensor()
     
     with placeholder.container():
         
-        # ================= TAMPILAN 1: SENSOR =================
+        # ============ TAB 1: SENSOR SENDIRI ============
         if menu == "📡 Monitor Sensor":
             st.title("📡 Monitoring Cuaca Real-Time")
             st.markdown("---")
@@ -210,15 +146,17 @@ while True:
                 now = df_iot.iloc[-1]
                 stat, ico = get_status_sensor(now)
                 
+                # Header Status
                 c1, c2 = st.columns([1, 4])
                 with c1: st.markdown(f"# {ico}")
                 with c2: 
                     st.info(f"Status: **{stat}**")
-                    st.caption(f"Update: {now['timestamp'].strftime('%d %b %Y, %H:%M:%S')} WIB")
-                    if "Hujan" in stat or "BADAI" in stat: st.error("PERINGATAN HUJAN!")
+                    st.caption(f"Update Terakhir: {now['timestamp'].strftime('%d %b %Y, %H:%M:%S')} WIB")
+                    if "Hujan" in stat or "BADAI" in stat: st.error("PERINGATAN: Sedang turun hujan!")
                 
                 st.divider()
 
+                # Metrik Data
                 m1, m2, m3, m4, m5 = st.columns(5)
                 m1.metric("🌡️ Suhu", f"{now.get('suhu',0):.1f} °C")
                 m2.metric("💧 Lembab", f"{now.get('kelembapan',0):.1f} %")
@@ -228,39 +166,54 @@ while True:
                 
                 st.divider()
 
+                # Grafik Sensor
                 g1, g2 = st.columns(2)
                 df_chart = df_iot.set_index('timestamp')
+                
                 with g1: 
-                    st.subheader("Lingkungan")
+                    st.subheader("📈 Lingkungan")
                     st.line_chart(df_chart[['suhu', 'kelembapan', 'tekanan']])
                 with g2: 
-                    st.subheader("Cahaya & Hujan")
+                    st.subheader("📈 Cahaya & Hujan")
                     st.area_chart(df_chart[['cahaya', 'hujan']])
                 
+                # Tabel Riwayat
                 st.divider()
-                st.subheader("📂 Riwayat Data Sensor (1000 Data)")
+                st.subheader("📂 Riwayat Data Sensor (1000 Data Terakhir)")
                 st.dataframe(df_iot.sort_values(by='timestamp', ascending=False).head(1000), use_container_width=True)
 
             else:
-                st.warning("Menunggu data alat ESP32...")
+                st.warning("Menunggu data masuk dari alat ESP32...")
                 st.spinner("Sedang memuat...")
 
-        # ================= TAMPILAN 2: BMKG =================
-        elif menu == "🏢 Data BMKG":
-            st.title(f"🏢 Prakiraan Cuaca: {nama_kota_terpilih}")
+        # ============ TAB 2: OPEN WEATHER MAP ============
+        elif menu == "🌍 Data Pembanding (OWM)":
+            st.title(f"🌍 Prakiraan Cuaca: {info_owm}")
             st.markdown("---")
             
-            # Notifikasi Status Koneksi
-            if status_msg:
-                st.warning(f"⚠️ Koneksi ke server BMKG gagal. Menampilkan data cadangan.")
-                st.caption(f"Detail Error: {status_msg}")
+            if df_owm is not None:
+                # Ambil data forecast paling awal (Cuaca saat ini/mendekati saat ini)
+                now_owm = df_owm.iloc[0]
+                
+                # Info Utama
+                col_a, col_b, col_c = st.columns(3)
+                col_a.metric("Suhu (OWM)", f"{now_owm['Suhu (°C)']} °C")
+                col_b.metric("Kelembapan (OWM)", f"{now_owm['Kelembapan (%)']} %")
+                col_c.metric("Kondisi", f"{now_owm['Cuaca']}")
+                
+                st.divider()
+                
+                # Grafik Tren Forecast
+                st.subheader("Grafik Tren Prakiraan (5 Hari Kedepan)")
+                st.line_chart(df_owm.set_index('Jam')[['Suhu (°C)', 'Kelembapan (%)']])
+                
+                # Tabel Data Forecast
+                st.subheader("Data Lengkap Forecast")
+                st.dataframe(df_owm[['Jam', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)']], use_container_width=True, hide_index=True)
+                
             else:
-                st.success("✅ Terhubung ke Server BMKG (Data Asli)")
-            
-            if df_bmkg_hasil is not None:
-                st.dataframe(df_bmkg_hasil, use_container_width=True, hide_index=True)
-                st.line_chart(df_bmkg_hasil.set_index('Jam (WIB)')[['Suhu (°C)', 'Kelembapan (%)']])
-            else:
-                st.error("Data tidak dapat ditampilkan.")
+                st.error("Gagal mengambil data dari OpenWeatherMap.")
+                st.warning(f"Pesan Sistem: {info_owm}")
+                st.info("Catatan: Jika API Key baru dibuat, mohon tunggu 30-60 menit agar aktif.")
 
     time.sleep(15)
