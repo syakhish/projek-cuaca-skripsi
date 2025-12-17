@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 import time
-from datetime import datetime
+from datetime import datetime, timedelta  # <--- PERBAIKAN DI SINI (Ditambah timedelta)
 import pytz
 import xmltodict
 import urllib3
@@ -33,7 +33,8 @@ def ensure_list(item):
 def get_data_dummy_malang():
     # Simulasi data 24 jam ke depan
     now = datetime.now(pytz.timezone('Asia/Jakarta'))
-    dummy_times = [now + timedelta(hours=i*6) for i in range(4)] # Per 6 jam
+    # timedelta sekarang sudah dikenali
+    dummy_times = [now + timedelta(hours=i*6) for i in range(4)] 
     
     # Format agar mirip struktur XML BMKG
     params = [
@@ -58,13 +59,20 @@ def get_data_bmkg_lengkap():
     """Mengambil data XML. Jika gagal, pakai data dummy."""
     try:
         headers_palsu = {'User-Agent': 'Mozilla/5.0'}
+        # Coba koneksi asli
         response = requests.get(URL_BMKG, timeout=10, headers=headers_palsu, verify=False)
         data_dict = xmltodict.parse(response.content)
         forecast = data_dict.get('data', {}).get('forecast', {})
         areas = ensure_list(forecast.get('area'))
-        return areas, None # Sukses
+        
+        # Validasi isi data
+        if not areas: raise Exception("Data XML Kosong")
+            
+        return areas, None # Sukses (msg = None)
+        
     except Exception as e:
         # JIKA GAGAL, KEMBALIKAN DATA DUMMY
+        # Agar dashboard tidak crash saat presentasi
         dummy_area = get_data_dummy_malang()
         return [dummy_area], f"Mode Offline: {str(e)}"
 
@@ -79,7 +87,6 @@ def get_pilihan_kota(areas):
 # ----------------- FUNGSI 2: PROSES DATA -----------------
 def proses_data_area(area_data):
     try:
-        from datetime import timedelta # Import di sini jaga-jaga
         params = ensure_list(area_data.get('parameter'))
         data_waktu = {}
 
@@ -187,8 +194,6 @@ if menu == "🏢 Data BMKG":
 
 # --- MAIN CONTENT ---
 placeholder = st.empty()
-
-from datetime import timedelta # Import ulang di global biar aman
 
 while True:
     st.cache_data.clear()
