@@ -68,8 +68,10 @@ def baca_data_owm():
             dt_utc = pytz.utc.localize(dt_obj)
             dt_wib = dt_utc.astimezone(pytz.timezone('Asia/Jakarta'))
             
+            # --- UPDATE: AMBIL TEKANAN (hPa) ---
             temp = item['main']['temp']
             hum = item['main']['humidity']
+            press = item['main']['pressure'] # Tambahan
             desc = item['weather'][0]['description']
             
             parsed_data.append({
@@ -77,6 +79,7 @@ def baca_data_owm():
                 'Jam': dt_wib.strftime("%d-%m %H:%M"),
                 'Suhu (°C)': float(temp),
                 'Kelembapan (%)': float(hum),
+                'Tekanan (hPa)': float(press), # Simpan Tekanan
                 'Cuaca': desc.title()
             })
             
@@ -133,69 +136,23 @@ with st.sidebar:
         st.markdown("""
         <style>
             /* --- MODE GELAP (DARK) --- */
-            
-            /* Background Utama */
-            .stApp {
-                background-color: #0E1117; /* Hitam Abu Streamlit */
-                color: #FFFFFF; /* Teks Putih */
-            }
-            
-            /* Sidebar */
-            section[data-testid="stSidebar"] {
-                background-color: #262730; /* Abu Gelap */
-                color: #FFFFFF;
-            }
-            
-            /* Judul & Teks Biasa */
-            h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown {
-                color: #FAFAFA !important; /* Putih Terang */
-            }
-            
-            /* Metrik (Angka Besar) */
-            [data-testid="stMetricValue"] {
-                color: #00FF7F !important; /* Hijau Neon agar kontras */
-            }
-            /* Label Metrik (Kecil) */
-            [data-testid="stMetricLabel"] {
-                color: #CCCCCC !important; /* Abu Terang */
-            }
-            
-            /* Tabel */
-            .stDataFrame {
-                background-color: #262730;
-            }
+            .stApp { background-color: #0E1117; color: #FFFFFF; }
+            section[data-testid="stSidebar"] { background-color: #262730; color: #FFFFFF; }
+            h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown { color: #FAFAFA !important; }
+            [data-testid="stMetricValue"] { color: #00FF7F !important; }
+            [data-testid="stMetricLabel"] { color: #CCCCCC !important; }
+            .stDataFrame { background-color: #262730; }
         </style>
         """, unsafe_allow_html=True)
     else:
         st.markdown("""
         <style>
             /* --- MODE TERANG (LIGHT) --- */
-            
-            /* Background Utama */
-            .stApp {
-                background-color: #FFFFFF; /* Putih Bersih */
-                color: #000000; /* Teks Hitam */
-            }
-            
-            /* Sidebar */
-            section[data-testid="stSidebar"] {
-                background-color: #F0F2F6; /* Abu Sangat Muda */
-                color: #000000;
-            }
-            
-            /* Judul & Teks Biasa */
-            h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown {
-                color: #31333F !important; /* Hitam Abu */
-            }
-            
-            /* Metrik (Angka Besar) */
-            [data-testid="stMetricValue"] {
-                color: #000000 !important; /* Hitam Pekat */
-            }
-            /* Label Metrik (Kecil) */
-            [data-testid="stMetricLabel"] {
-                color: #555555 !important; /* Abu Gelap */
-            }
+            .stApp { background-color: #FFFFFF; color: #000000; }
+            section[data-testid="stSidebar"] { background-color: #F0F2F6; color: #000000; }
+            h1, h2, h3, h4, h5, h6, p, li, span, label, div.stMarkdown { color: #31333F !important; }
+            [data-testid="stMetricValue"] { color: #000000 !important; }
+            [data-testid="stMetricLabel"] { color: #555555 !important; }
         </style>
         """, unsafe_allow_html=True)
     
@@ -270,17 +227,21 @@ while True:
             
             if df_owm is not None:
                 now_owm = df_owm.iloc[0]
-                col_a, col_b, col_c = st.columns(3)
+                
+                # --- UPDATE: Tambah Kolom Tekanan ---
+                col_a, col_b, col_c, col_d = st.columns(4)
                 col_a.metric("Suhu (OWM)", f"{now_owm['Suhu (°C)']} °C")
                 col_b.metric("Kelembapan (OWM)", f"{now_owm['Kelembapan (%)']} %")
-                col_c.metric("Kondisi", f"{now_owm['Cuaca']}")
+                col_c.metric("Tekanan (OWM)", f"{now_owm['Tekanan (hPa)']} hPa") # Baru
+                col_d.metric("Kondisi", f"{now_owm['Cuaca']}")
                 
                 st.divider()
                 st.subheader("Grafik Tren 5 Hari")
-                st.line_chart(df_owm.set_index('Jam')[['Suhu (°C)', 'Kelembapan (%)']])
+                # Grafik Tekanan ikut ditampilkan
+                st.line_chart(df_owm.set_index('Jam')[['Suhu (°C)', 'Kelembapan (%)', 'Tekanan (hPa)']])
                 
                 st.subheader("Data Lengkap Forecast")
-                st.dataframe(df_owm[['Jam', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)']], use_container_width=True, hide_index=True)
+                st.dataframe(df_owm[['Jam', 'Cuaca', 'Suhu (°C)', 'Kelembapan (%)', 'Tekanan (hPa)']], use_container_width=True, hide_index=True)
             else:
                 st.error("Gagal mengambil data OpenWeatherMap.")
 
@@ -295,32 +256,44 @@ while True:
 
                 st.subheader("1. Perbandingan Nilai Terkini")
                 
+                # Data Sensor
                 t_sensor = sensor_now.get('suhu', 0)
-                t_owm = owm_now['Suhu (°C)']
-                delta_t = t_sensor - t_owm
-
                 h_sensor = sensor_now.get('kelembapan', 0)
-                h_owm = owm_now['Kelembapan (%)']
-                delta_h = h_sensor - h_owm
+                p_sensor = sensor_now.get('tekanan', 0) # Ambil tekanan sensor
 
-                col_comp1, col_comp2 = st.columns(2)
+                # Data API
+                t_owm = owm_now['Suhu (°C)']
+                h_owm = owm_now['Kelembapan (%)']
+                p_owm = owm_now['Tekanan (hPa)'] # Ambil tekanan API
+
+                # Hitung Delta
+                delta_t = t_sensor - t_owm
+                delta_h = h_sensor - h_owm
+                delta_p = p_sensor - p_owm
+
+                # --- UPDATE: KOLOM UNTUK TEKANAN ---
+                c1, c2, c3 = st.columns(3)
                 
-                col_comp1.markdown("### 🌡️ Temperatur")
-                col_comp1.metric("Sensor (Alat)", f"{t_sensor:.1f} °C")
-                col_comp1.metric("API (OpenWeather)", f"{t_owm:.1f} °C", f"{delta_t:.1f} °C (Selisih)", delta_color="inverse")
+                c1.markdown("### 🌡️ Temperatur")
+                c1.metric("Sensor (Alat)", f"{t_sensor:.1f} °C")
+                c1.metric("API (OpenWeather)", f"{t_owm:.1f} °C", f"{delta_t:.1f} °C (Selisih)", delta_color="inverse")
                 
-                col_comp2.markdown("### 💧 Kelembapan")
-                col_comp2.metric("Sensor (Alat)", f"{h_sensor:.1f} %")
-                col_comp2.metric("API (OpenWeather)", f"{h_owm:.1f} %", f"{delta_h:.1f} % (Selisih)", delta_color="inverse")
+                c2.markdown("### 💧 Kelembapan")
+                c2.metric("Sensor (Alat)", f"{h_sensor:.1f} %")
+                c2.metric("API (OpenWeather)", f"{h_owm:.1f} %", f"{delta_h:.1f} % (Selisih)", delta_color="inverse")
+
+                c3.markdown("### 🎈 Tekanan")
+                c3.metric("Sensor (Alat)", f"{p_sensor:.1f} hPa")
+                c3.metric("API (OpenWeather)", f"{p_owm:.1f} hPa", f"{delta_p:.1f} hPa (Selisih)", delta_color="inverse")
 
                 st.divider()
 
                 st.subheader("2. Tabel Validasi")
                 comparison_data = {
-                    "Parameter": ["Suhu (°C)", "Kelembapan (%)", "Status Cuaca"],
-                    "📡 Sensor ESP32": [f"{t_sensor:.1f}", f"{h_sensor:.1f}", get_status_sensor(sensor_now)[0]],
-                    "🌍 OpenWeatherMap": [f"{t_owm:.1f}", f"{h_owm:.1f}", owm_now['Cuaca']],
-                    "Selisih (Error)": [f"{abs(delta_t):.1f}", f"{abs(delta_h):.1f}", "-"]
+                    "Parameter": ["Suhu (°C)", "Kelembapan (%)", "Tekanan (hPa)", "Status Cuaca"],
+                    "📡 Sensor ESP32": [f"{t_sensor:.1f}", f"{h_sensor:.1f}", f"{p_sensor:.1f}", get_status_sensor(sensor_now)[0]],
+                    "🌍 OpenWeatherMap": [f"{t_owm:.1f}", f"{h_owm:.1f}", f"{p_owm:.1f}", owm_now['Cuaca']],
+                    "Selisih (Error)": [f"{abs(delta_t):.1f}", f"{abs(delta_h):.1f}", f"{abs(delta_p):.1f}", "-"]
                 }
                 st.table(pd.DataFrame(comparison_data))
                 
@@ -328,12 +301,14 @@ while True:
                 
                 st.subheader("3. Visualisasi Perbandingan")
                 bar_data = pd.DataFrame({
-                    "Sumber": ["Sensor", "API", "Sensor", "API"],
-                    "Tipe": ["Suhu", "Suhu", "Kelembapan", "Kelembapan"],
-                    "Nilai": [t_sensor, t_owm, h_sensor, h_owm]
+                    "Sumber": ["Sensor", "API", "Sensor", "API", "Sensor", "API"],
+                    "Tipe": ["Suhu", "Suhu", "Kelembapan", "Kelembapan", "Tekanan", "Tekanan"],
+                    "Nilai": [t_sensor, t_owm, h_sensor, h_owm, p_sensor, p_owm]
                 })
                 
-                g_comp1, g_comp2 = st.columns(2)
+                # --- UPDATE: GRAFIK TEKANAN DIPISAH ---
+                # (Karena nilainya ribuan, susah dilihat kalau digabung dengan suhu/lembab)
+                g_comp1, g_comp2, g_comp3 = st.columns(3)
                 
                 with g_comp1:
                     st.caption("Perbandingan Suhu (°C)")
@@ -342,6 +317,10 @@ while True:
                 with g_comp2:
                     st.caption("Perbandingan Kelembapan (%)")
                     st.bar_chart(bar_data[bar_data["Tipe"] == "Kelembapan"].set_index("Sumber")["Nilai"])
+
+                with g_comp3:
+                    st.caption("Perbandingan Tekanan (hPa)")
+                    st.bar_chart(bar_data[bar_data["Tipe"] == "Tekanan"].set_index("Sumber")["Nilai"])
 
             else:
                 st.warning("Menunggu data lengkap dari Sensor dan API untuk melakukan komparasi...")
